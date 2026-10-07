@@ -47,6 +47,18 @@ def run_smoke_test(audio_file: str | None) -> int:
     step("database", lambda: (db.init_db(), str(paths.db_path()))[1])
     step("hardware", lambda: hardware.detect().to_dict())
 
+    def sync_client() -> str:
+        from .sync import oauth
+
+        cfg = oauth.client_config()
+        if cfg is None:
+            return "not bundled (sync disabled in this build)"
+        if not cfg[0].endswith(".apps.googleusercontent.com"):
+            raise RuntimeError("Bundled Google client ID is malformed.")
+        return f"bundled ({cfg[0][:12]}...)"
+
+    step("sync_client", sync_client)
+
     def server() -> dict[str, Any]:
         import httpx
 

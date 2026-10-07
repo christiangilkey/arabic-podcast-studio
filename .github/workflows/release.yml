@@ -73,8 +73,17 @@ jobs:
           GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
         run: |
           if [ -n "$GOOGLE_CLIENT_ID" ] && [ -n "$GOOGLE_CLIENT_SECRET" ]; then
-            python -c "import json,os; json.dump({'client_id': os.environ['GOOGLE_CLIENT_ID'], 'client_secret': os.environ['GOOGLE_CLIENT_SECRET']}, open('app/sync/google_client.json','w'))"
-            echo "Bundled Google client."
+            python - <<'EOF'
+          import json, os, re, sys
+          cid = os.environ["GOOGLE_CLIENT_ID"].strip().strip('"')
+          secret = os.environ["GOOGLE_CLIENT_SECRET"].strip().strip('"')
+          if not re.fullmatch(r"[0-9]+-[a-z0-9]+\.apps\.googleusercontent\.com", cid):
+              sys.exit("GOOGLE_CLIENT_ID doesn't look like a Google OAuth client ID")
+          if not re.fullmatch(r"GOCSPX-[A-Za-z0-9_-]{20,}", secret):
+              sys.exit("GOOGLE_CLIENT_SECRET doesn't look like a Google OAuth client secret")
+          json.dump({"client_id": cid, "client_secret": secret}, open("app/sync/google_client.json", "w"))
+          print("Bundled Google client", cid[:12] + "...")
+          EOF
           else
             echo "::warning::GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET secrets not set; this build will have sync disabled."
           fi
