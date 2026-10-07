@@ -1,6 +1,6 @@
 // Settings: model, GPU, audio storage, appearance, data backup, updates.
 
-import { api, esc, h, toast, download, state, loadStatus, saveSettings, fmtBytes } from "../app.js";
+import { api, esc, h, on, toast, download, state, loadStatus, saveSettings, fmtBytes } from "../app.js";
 import { modelManager, gpuPanel } from "../components/models.js";
 import { PROVIDERS, define } from "../definer.js";
 
@@ -26,6 +26,14 @@ export async function render(view) {
     </section>
 
     ${hw.gpu_pack_supported ? `<section class="card"><h2>GPU acceleration</h2><div id="gpu"></div></section>` : ""}
+
+    <section class="card stack" id="sync">
+      <h2>Sync with Google Drive</h2>
+      <p class="small muted">Keep your podcasts, transcripts and vocab in sync between this computer, other computers
+        and the Android app. Everything is stored in a private app folder in <em>your own</em> Google Drive that only
+        this app can see. Nothing goes to any other server.</p>
+      <div id="sync-panel"></div>
+    </section>
 
     <section class="card stack" id="definer">
       <h2>Word definitions (AI)</h2>
@@ -104,6 +112,61 @@ export async function render(view) {
   $("#data-dir").textContent = status.data_dir;
   const cleanups = [modelManager($("#models"), { hardware: hw })];
   if (hw.gpu_pack_supported) cleanups.push(gpuPanel($("#gpu"), hw));
+
+  // ----- Google Drive sync -----
+  function ago(ts) {
+    if (!ts) return "never";
+    const s = Math.round(Date.now() / 1000 - ts);
+    if (s < 60) return "just now";
+    if (s < 3600) return `${Math.round(s / 60)} min ago`;
+    return new Date(ts * 1000).toLocaleString();
+  }
+  function paintSync(st) {
+    const box = $("#sync-panel");
+    if (!st.configured) {
+      box.innerHTML = `<p class="small" style="color:var(--warn)">Sync isn't available in this build (no Google sign-in configured).</p>`;
+      return;
+    }
+    if (!st.signed_in) {
+      box.innerHTML = `<div class="row"><button type="button" class="primary" id="sync-login">Sign in with Google</button>
+        <span class="small muted">Opens your web browser to sign in.</span></div>
+        ${st.error ? `<p class="small" style="color:var(--danger)">${esc(st.error)}</p>` : ""}`;
+      box.querySelector("#sync-login").onclick = async (e) => {
+        e.target.disabled = true;
+        e.target.textContent = "Waiting for Google…";
+        try { await api("/sync/login", { method: "POST" }); }
+        catch (err) { toast(err.message, { error: true }); e.target.disabled = false; e.target.textContent = "Sign in with Google"; }
+      };
+      return;
+    }
+    const busy = st.state === "syncing";
+    const r = st.last_result;
+    box.innerHTML = `
+      <div class="row"><span class="pill done">Signed in</span> <strong>${esc(st.email || "Google account")}</strong>
+        <span class="spacer"></span>
+        <button type="button" id="sync-now" ${busy ? "disabled" : ""}>${busy ? "Syncing…" : "Sync now"}</button>
+        <button type="button" class="ghost danger" id="sync-logout">Sign out</button></div>
+      <div class="small ${st.state === "error" ? "" : "muted"}" style="${st.state === "error" ? "color:var(--danger)" : ""}">
+        ${st.state === "error" ? `Last sync failed: ${esc(st.error)}` : `Last synced ${ago(st.last_sync)}`}
+        ${r && st.state !== "error" ? ` · ${r.uploaded_transcripts} transcript(s) up, ${r.downloaded_transcripts} down, ${r.uploaded_audio} audio up` : ""}
+      </div>
+      <label class="check"><input type="checkbox" id="sync-audio" ${st.sync_audio ? "checked" : ""}>
+        <span>Upload compressed audio copies (about 12 MB per hour)<br><span class="small muted">Lets your phone and other computers
+        play exactly the audio that was transcribed, so highlighting stays in sync even on podcasts that insert different ads
+        per download. Uses your Google Drive storage.</span></span></label>`;
+    box.querySelector("#sync-now").onclick = async () => {
+      try { paintSync(await api("/sync/now", { method: "POST" })); } catch (err) { toast(err.message, { error: true }); }
+    };
+    box.querySelector("#sync-logout").onclick = async () => {
+      if (!confirm("Sign out of Google? Your library stays on this computer; it just stops syncing.")) return;
+      paintSync(await api("/sync/logout", { method: "POST" }));
+    };
+    box.querySelector("#sync-audio").onchange = async (e) => {
+      paintSync(await api("/sync/settings", { method: "PATCH", body: { sync_audio: e.target.checked } }));
+    };
+  }
+  paintSync(await api("/sync/status"));
+  cleanups.push(on("sync", paintSync));
 
   // ----- AI definitions -----
   const defProvider = () => $("#def-provider").value;

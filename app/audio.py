@@ -85,6 +85,52 @@ def decode(path: Path, sample_rate: int = SAMPLE_RATE) -> np.ndarray:
     return pcm.astype(np.float32) / 32768.0
 
 
+def encode_speech_copy(src: Path, dst: Path, bitrate: int = 32_000) -> Path:
+    """Compressed copy for syncing to other devices: mono Opus in Ogg (~15 MB per hour).
+
+    Decoding starts at the same first sample as :func:`decode`, so transcript timestamps
+    line up exactly with the copy.
+    """
+    import os
+
+    import av
+
+    tmp = dst.with_name(dst.name + ".part")
+    try:
+        with av.open(str(src)) as inp, av.open(str(tmp), "w", format="ogg") as out:
+            ins = next((s for s in inp.streams if s.type == "audio"), None)
+            if ins is None:
+                raise AudioError("The file contains no audio stream.")
+            ost = out.add_stream("libopus", rate=48000, layout="mono")
+            ost.bit_rate = bitrate
+            resampler = av.AudioResampler(format="s16", layout="mono", rate=48000)
+
+            def emit(frames: list) -> None:
+                for f in frames:
+                    f.pts = None
+                    for pkt in ost.encode(f):
+                        out.mux(pkt)
+
+            for packet in inp.demux(ins):
+                try:
+                    decoded = packet.decode()
+                except av.error.InvalidDataError:
+                    continue
+                for frame in decoded:
+                    emit(resampler.resample(frame))
+            emit(resampler.resample(None))
+            for pkt in ost.encode(None):
+                out.mux(pkt)
+    except AudioError:
+        tmp.unlink(missing_ok=True)
+        raise
+    except Exception as exc:
+        tmp.unlink(missing_ok=True)
+        raise AudioError(f"Could not create the compressed audio copy: {exc}") from exc
+    os.replace(tmp, dst)
+    return dst
+
+
 def check_ffmpeg() -> tuple[bool, str]:
     """Startup check that the bundled FFmpeg libraries load and can encode/decode."""
     try:

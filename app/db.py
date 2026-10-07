@@ -17,7 +17,7 @@ from typing import Any
 
 from . import paths
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS feeds (
@@ -147,14 +147,92 @@ def init_db(path: Path | None = None) -> None:
         conn = connect(path)
         try:
             conn.executescript(SCHEMA)
-            current = conn.execute("PRAGMA user_version").fetchone()[0]
-            if current < SCHEMA_VERSION:
-                # Future migrations go here, keyed on `current`.
-                conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
+            _migrate(conn)
+            conn.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
             conn.commit()
         finally:
             conn.close()
         _initialized.add(path)
+
+
+# --- migrations ----------------------------------------------------------------------------
+
+NOW_SQL = "((julianday('now') - 2440587.5) * 86400.0)"
+
+# Sync columns (schema v2). Added idempotently so old and new databases converge.
+_SYNC_COLUMNS = {
+    "feeds": [("uid", "TEXT"), ("updated_at", "REAL"), ("deleted", "INTEGER NOT NULL DEFAULT 0")],
+    "episodes": [("uid", "TEXT"), ("updated_at", "REAL"), ("transcribe_requested_at", "REAL"),
+                 ("remote_audio", "INTEGER NOT NULL DEFAULT 0"), ("synced_rev", "REAL"),
+                 ("sync_audio_path", "TEXT")],
+    "vocab": [("uid", "TEXT"), ("updated_at", "REAL"), ("deleted", "INTEGER NOT NULL DEFAULT 0"),
+              ("episode_uid", "TEXT")],
+}
+
+# updated_at is bumped automatically whenever a synced field changes locally. Sync writes
+# run inside `sync_writes()`, which parks a row in sync_guard for the length of their own
+# transaction so the triggers stand down (no other connection ever sees that row).
+_TRIGGER_NAMES = ("feeds_ins", "feeds_upd", "episodes_ins", "episodes_upd", "vocab_ins", "vocab_upd")
+_TRIGGERS = f"""
+CREATE TABLE IF NOT EXISTS sync_guard (active INTEGER);
+CREATE TRIGGER IF NOT EXISTS feeds_ins AFTER INSERT ON feeds WHEN NEW.updated_at IS NULL AND NOT EXISTS (SELECT 1 FROM sync_guard)
+BEGIN UPDATE feeds SET updated_at = {NOW_SQL} WHERE id = NEW.id; END;
+CREATE TRIGGER IF NOT EXISTS feeds_upd AFTER UPDATE ON feeds
+WHEN NEW.updated_at IS OLD.updated_at AND NOT EXISTS (SELECT 1 FROM sync_guard) AND (NEW.auto_transcribe IS NOT OLD.auto_transcribe
+  OR NEW.deleted IS NOT OLD.deleted OR NEW.title IS NOT OLD.title OR NEW.image IS NOT OLD.image)
+BEGIN UPDATE feeds SET updated_at = {NOW_SQL} WHERE id = NEW.id; END;
+
+CREATE TRIGGER IF NOT EXISTS episodes_ins AFTER INSERT ON episodes WHEN NEW.updated_at IS NULL AND NOT EXISTS (SELECT 1 FROM sync_guard)
+BEGIN UPDATE episodes SET updated_at = {NOW_SQL} WHERE id = NEW.id; END;
+CREATE TRIGGER IF NOT EXISTS episodes_upd AFTER UPDATE ON episodes
+WHEN NEW.updated_at IS OLD.updated_at AND NOT EXISTS (SELECT 1 FROM sync_guard) AND (NEW.title IS NOT OLD.title OR NEW.audio_url IS NOT OLD.audio_url
+  OR NEW.duration IS NOT OLD.duration OR NEW.transcribe_requested_at IS NOT OLD.transcribe_requested_at
+  OR NEW.synced_rev IS NOT OLD.synced_rev OR NEW.remote_audio IS NOT OLD.remote_audio)
+BEGIN UPDATE episodes SET updated_at = {NOW_SQL} WHERE id = NEW.id; END;
+
+CREATE TRIGGER IF NOT EXISTS vocab_ins AFTER INSERT ON vocab WHEN NEW.updated_at IS NULL AND NOT EXISTS (SELECT 1 FROM sync_guard)
+BEGIN UPDATE vocab SET updated_at = {NOW_SQL} WHERE id = NEW.id; END;
+CREATE TRIGGER IF NOT EXISTS vocab_upd AFTER UPDATE ON vocab
+WHEN NEW.updated_at IS OLD.updated_at AND NOT EXISTS (SELECT 1 FROM sync_guard) AND (NEW.text IS NOT OLD.text OR NEW.meaning IS NOT OLD.meaning
+  OR NEW.notes IS NOT OLD.notes OR NEW.deleted IS NOT OLD.deleted)
+BEGIN UPDATE vocab SET updated_at = {NOW_SQL} WHERE id = NEW.id; END;
+"""
+
+
+def _columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    return {r[1] for r in conn.execute(f"PRAGMA table_info({table})")}
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    from . import ids
+
+    for table, cols in _SYNC_COLUMNS.items():
+        have = _columns(conn, table)
+        for name, decl in cols:
+            if name not in have:
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {name} {decl}")
+    for name in _TRIGGER_NAMES:  # recreate so trigger changes in new versions take effect
+        conn.execute(f"DROP TRIGGER IF EXISTS {name}")
+    conn.executescript(_TRIGGERS)
+    conn.execute("DELETE FROM sync_guard")
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_feeds_uid ON feeds(uid)")
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_episodes_uid ON episodes(uid)")
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_vocab_uid ON vocab(uid)")
+
+    # Backfill global ids for rows created before sync existed.
+    for row in conn.execute("SELECT id, url, created_at FROM feeds WHERE uid IS NULL").fetchall():
+        conn.execute("UPDATE feeds SET uid = ?, updated_at = COALESCE(updated_at, ?) WHERE id = ?",
+                     (ids.feed_uid(row[1]), row[2], row[0]))
+    for row in conn.execute(
+        "SELECT e.id, f.uid, e.guid, e.created_at FROM episodes e JOIN feeds f ON f.id = e.feed_id WHERE e.uid IS NULL"
+    ).fetchall():
+        conn.execute("UPDATE episodes SET uid = ?, updated_at = COALESCE(updated_at, ?) WHERE id = ?",
+                     (ids.episode_uid(row[1], row[2]), row[3], row[0]))
+    for row in conn.execute(
+        "SELECT v.id, v.created_at, e.uid FROM vocab v LEFT JOIN episodes e ON e.id = v.episode_id WHERE v.uid IS NULL"
+    ).fetchall():
+        conn.execute("UPDATE vocab SET uid = ?, updated_at = COALESCE(updated_at, ?), episode_uid = ? WHERE id = ?",
+                     (ids.new_uid(), row[1], row[2], row[0]))
 
 
 @contextmanager
@@ -172,6 +250,16 @@ def session() -> Iterator[sqlite3.Connection]:
         raise
     finally:
         conn.close()
+
+
+@contextmanager
+def sync_writes(conn: sqlite3.Connection) -> Iterator[None]:
+    """Within this block, writes keep the updated_at values they set (no trigger bumps)."""
+    conn.execute("INSERT INTO sync_guard(active) VALUES(1)")
+    try:
+        yield
+    finally:
+        conn.execute("DELETE FROM sync_guard")
 
 
 def row_to_dict(row: sqlite3.Row | None) -> dict[str, Any] | None:
@@ -203,10 +291,16 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "llm_key_gemini": "",
     "llm_key_openai": "",
     "llm_key_grok": "",
+    # Google Drive sync.
+    "google_refresh_token": "",
+    "google_email": "",
+    "sync_audio": True,             # upload compressed audio copies so other devices play identical audio
+    "device_id": "",
 }
 
 # Settings that hold secrets: never exported in backups.
-SECRET_SETTINGS = ("llm_key_claude", "llm_key_gemini", "llm_key_openai", "llm_key_grok")
+SECRET_SETTINGS = ("llm_key_claude", "llm_key_gemini", "llm_key_openai", "llm_key_grok",
+                   "google_refresh_token")
 
 
 def get_settings() -> dict[str, Any]:

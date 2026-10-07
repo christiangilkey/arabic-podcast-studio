@@ -16,7 +16,7 @@ import httpx
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from .. import db
+from .. import db, sync
 
 router = APIRouter(tags=["definer"])
 
@@ -59,12 +59,11 @@ class DefinitionIn(BaseModel):
 
 
 @router.get("/definitions/{key}")
-def get_definition(key: str) -> dict[str, Any]:
+def get_definition(key: str) -> dict[str, Any] | None:
+    """Cached answer, or null when this word/sentence hasn't been looked up yet."""
     with db.session() as conn:
         row = conn.execute("SELECT data FROM definitions WHERE key = ?", (key,)).fetchone()
-    if row is None:
-        raise HTTPException(404, "Not cached.")
-    return json.loads(row["data"])
+    return json.loads(row["data"]) if row else None
 
 
 @router.put("/definitions/{key}")
@@ -77,6 +76,7 @@ def put_definition(key: str, body: DefinitionIn) -> dict[str, bool]:
             (key, body.word, body.sentence, json.dumps(body.data, ensure_ascii=False), body.provider, body.model,
              time.time()),
         )
+    sync.request(delay=30)
     return {"ok": True}
 
 

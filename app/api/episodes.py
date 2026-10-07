@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse, Response
 from pydantic import BaseModel
 
-from .. import db, exporters, jobs
+from .. import db, exporters, jobs, sync
 
 router = APIRouter(tags=["episodes"])
 
@@ -79,7 +79,10 @@ def get_episode(episode_id: int) -> dict[str, Any]:
 
 @router.post("/episodes/transcribe")
 def transcribe(body: TranscribeIn) -> dict[str, Any]:
-    return {"queued": jobs.enqueue(body.ids)}
+    queued = jobs.enqueue(body.ids)
+    if queued:
+        sync.request()  # so other devices see the queued state
+    return {"queued": queued}
 
 
 @router.post("/episodes/{episode_id}/cancel")
@@ -116,6 +119,13 @@ def episode_audio(episode_id: int) -> Response:
         path = Path(ep["audio_path"])
         media = ep["audio_type"] or mimetypes.guess_type(path.name)[0] or "audio/mpeg"
         return FileResponse(path, media_type=media)  # supports HTTP Range for seeking
+    # Transcribed on another device (or original deleted): the synced copy is the exact audio
+    # the transcript was made from, so timestamps line up even if the feed inserts ads.
+    copy = Path(ep["sync_audio_path"]) if ep["sync_audio_path"] else None
+    if (copy is None or not copy.exists()) and ep["remote_audio"]:
+        copy = sync.audio_copy(episode_id)
+    if copy is not None and copy.exists():
+        return FileResponse(copy, media_type="audio/ogg")
     return RedirectResponse(ep["audio_url"], status_code=307)
 
 

@@ -29,7 +29,8 @@ export async function getDefinition(ctx, refresh = false) {
   const cfg = definerConfig();
   const key = await cacheKey(ctx.word, ctx.marked, cfg.language);
   if (!refresh) {
-    try { return await api(`/definitions/${key}`); } catch { /* not cached */ }
+    const cached = await api(`/definitions/${key}`).catch(() => null);
+    if (cached) return cached;
   }
   if (!cfg.key) throw new DefinerError("NO_KEY");
   const data = await define(cfg, ctx, relay);

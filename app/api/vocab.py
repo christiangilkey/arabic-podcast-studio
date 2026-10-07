@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import Response
 from pydantic import BaseModel
 
-from .. import arabic, db, exporters
+from .. import arabic, db, exporters, ids, sync
 
 router = APIRouter(prefix="/vocab", tags=["vocab"])
 
@@ -34,7 +34,7 @@ class VocabPatch(BaseModel):
 
 def _items(q: str | None = None) -> list[dict[str, Any]]:
     with db.session() as conn:
-        rows = conn.execute("SELECT * FROM vocab ORDER BY created_at DESC").fetchall()
+        rows = conn.execute("SELECT * FROM vocab WHERE deleted = 0 ORDER BY created_at DESC").fetchall()
     items = db.rows_to_dicts(rows)
     if q:
         nq = arabic.normalize(q)
@@ -55,18 +55,20 @@ def add_vocab(body: VocabIn) -> dict[str, Any]:
     if not text:
         raise HTTPException(400, "Nothing to save.")
     title = ""
+    episode_uid = None
     with db.session() as conn:
         if body.episode_id is not None:
-            ep = conn.execute("SELECT title FROM episodes WHERE id = ?", (body.episode_id,)).fetchone()
-            title = ep["title"] if ep else ""
+            ep = conn.execute("SELECT title, uid FROM episodes WHERE id = ?", (body.episode_id,)).fetchone()
+            if ep:
+                title, episode_uid = ep["title"], ep["uid"]
         cur = conn.execute(
-            "INSERT INTO vocab(episode_id, text, norm, sentence, start, end, sent_start, sent_end, meaning, notes, "
-            "episode_title, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
-            (body.episode_id, text, arabic.normalize(text), body.sentence.strip(), body.start, body.end,
-             body.sent_start, body.sent_end,
-             body.meaning, body.notes, title, time.time()),
+            "INSERT INTO vocab(uid, episode_id, episode_uid, text, norm, sentence, start, end, sent_start, sent_end, "
+            "meaning, notes, episode_title, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            (ids.new_uid(), body.episode_id, episode_uid, text, arabic.normalize(text), body.sentence.strip(),
+             body.start, body.end, body.sent_start, body.sent_end, body.meaning, body.notes, title, time.time()),
         )
         row = conn.execute("SELECT * FROM vocab WHERE id = ?", (cur.lastrowid,)).fetchone()
+    sync.request()
     return dict(row)
 
 
@@ -83,13 +85,16 @@ def update_vocab(vocab_id: int, body: VocabPatch) -> dict[str, Any]:
         row = conn.execute("SELECT * FROM vocab WHERE id = ?", (vocab_id,)).fetchone()
     if row is None:
         raise HTTPException(404, "Not found.")
+    sync.request(delay=10)  # typing in notes: wait for a pause
     return dict(row)
 
 
 @router.delete("/{vocab_id}")
 def delete_vocab(vocab_id: int) -> dict[str, bool]:
     with db.session() as conn:
-        conn.execute("DELETE FROM vocab WHERE id = ?", (vocab_id,))
+        # Soft delete: the tombstone syncs the deletion to other devices.
+        conn.execute("UPDATE vocab SET deleted = 1 WHERE id = ?", (vocab_id,))
+    sync.request()
     return {"ok": True}
 
 

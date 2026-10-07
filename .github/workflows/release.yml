@@ -66,6 +66,19 @@ jobs:
           EOF
           grep -E "__version__|GITHUB_REPO" app/version.py
 
+      - name: Google sign-in client (for Drive sync)
+        shell: bash
+        env:
+          GOOGLE_CLIENT_ID: ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+        run: |
+          if [ -n "$GOOGLE_CLIENT_ID" ] && [ -n "$GOOGLE_CLIENT_SECRET" ]; then
+            python -c "import json,os; json.dump({'client_id': os.environ['GOOGLE_CLIENT_ID'], 'client_secret': os.environ['GOOGLE_CLIENT_SECRET']}, open('app/sync/google_client.json','w'))"
+            echo "Bundled Google client."
+          else
+            echo "::warning::GOOGLE_CLIENT_ID/GOOGLE_CLIENT_SECRET secrets not set; this build will have sync disabled."
+          fi
+
       - name: Linux system libraries
         if: matrix.target == 'linux'
         run: |

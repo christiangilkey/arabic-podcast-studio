@@ -13,7 +13,7 @@ from typing import Any
 import feedparser
 import httpx
 
-from . import db, events
+from . import db, events, ids
 from .version import APP_NAME, __version__
 
 log = logging.getLogger(__name__)
@@ -219,6 +219,7 @@ def _upsert_episodes(conn: Any, feed_id: int, parsed: ParsedFeed) -> list[int]:
     """Insert new episodes and refresh metadata of existing ones. Returns ids of new episodes."""
     new_ids: list[int] = []
     now = time.time()
+    feed_uid = conn.execute("SELECT uid FROM feeds WHERE id = ?", (feed_id,)).fetchone()[0]
     for ep in parsed.episodes:
         row = conn.execute("SELECT id FROM episodes WHERE feed_id = ? AND guid = ?", (feed_id, ep.guid)).fetchone()
         if row:
@@ -229,10 +230,10 @@ def _upsert_episodes(conn: Any, feed_id: int, parsed: ParsedFeed) -> list[int]:
             )
         else:
             cur = conn.execute(
-                "INSERT INTO episodes(feed_id, guid, title, description, published, duration, image, "
-                "audio_url, audio_type, created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
-                (feed_id, ep.guid, ep.title, ep.description, ep.published, ep.duration, ep.image,
-                 ep.audio_url, ep.audio_type, now),
+                "INSERT INTO episodes(feed_id, uid, guid, title, description, published, duration, image, "
+                "audio_url, audio_type, created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
+                (feed_id, ids.episode_uid(feed_uid, ep.guid), ep.guid, ep.title, ep.description, ep.published,
+                 ep.duration, ep.image, ep.audio_url, ep.audio_type, now),
             )
             new_ids.append(int(cur.lastrowid))
     return new_ids
@@ -241,21 +242,34 @@ def _upsert_episodes(conn: Any, feed_id: int, parsed: ParsedFeed) -> list[int]:
 def add_feed(url: str) -> dict[str, Any]:
     url = normalize_url(url)
     with db.session() as conn:
-        existing = conn.execute("SELECT * FROM feeds WHERE url = ?", (url,)).fetchone()
+        existing = conn.execute("SELECT * FROM feeds WHERE url = ? AND deleted = 0", (url,)).fetchone()
     if existing:
         raise FeedError("You're already subscribed to this feed.")
     content, final_url, etag, modified = fetch(url)
     assert content is not None
     parsed = parse_feed(content)
     with db.session() as conn:
-        if final_url != url and conn.execute("SELECT 1 FROM feeds WHERE url = ?", (final_url,)).fetchone():
+        if final_url != url and conn.execute(
+            "SELECT 1 FROM feeds WHERE url = ? AND deleted = 0", (final_url,)
+        ).fetchone():
             raise FeedError("You're already subscribed to this feed.")
-        cur = conn.execute(
-            "INSERT INTO feeds(url, title, description, image, link, last_checked, etag, modified, created_at) "
-            "VALUES(?,?,?,?,?,?,?,?,?)",
-            (final_url, parsed.title, parsed.description, parsed.image, parsed.link, time.time(), etag, modified, time.time()),
-        )
-        feed_id = int(cur.lastrowid)
+        tomb = conn.execute("SELECT id FROM feeds WHERE url = ? AND deleted = 1", (final_url,)).fetchone()
+        if tomb:
+            # Re-subscribing to a feed removed earlier (here or on another device): revive it.
+            feed_id = int(tomb[0])
+            conn.execute(
+                "UPDATE feeds SET deleted = 0, title = ?, description = ?, image = ?, link = ?, last_checked = ?, "
+                "etag = ?, modified = ?, auto_transcribe = 0 WHERE id = ?",
+                (parsed.title, parsed.description, parsed.image, parsed.link, time.time(), etag, modified, feed_id),
+            )
+        else:
+            cur = conn.execute(
+                "INSERT INTO feeds(url, uid, title, description, image, link, last_checked, etag, modified, "
+                "created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                (final_url, ids.feed_uid(final_url), parsed.title, parsed.description, parsed.image, parsed.link,
+                 time.time(), etag, modified, time.time()),
+            )
+            feed_id = int(cur.lastrowid)
         _upsert_episodes(conn, feed_id, parsed)
         feed = db.row_to_dict(conn.execute("SELECT * FROM feeds WHERE id = ?", (feed_id,)).fetchone())
     assert feed is not None
@@ -267,7 +281,7 @@ def refresh_feed(feed_id: int) -> list[int]:
     from . import jobs  # local import: jobs imports feeds-independent modules only
 
     with db.session() as conn:
-        feed = conn.execute("SELECT * FROM feeds WHERE id = ?", (feed_id,)).fetchone()
+        feed = conn.execute("SELECT * FROM feeds WHERE id = ? AND deleted = 0", (feed_id,)).fetchone()
     if feed is None:
         return []
     try:
@@ -294,9 +308,9 @@ def refresh_feed(feed_id: int) -> list[int]:
 
 def refresh_all() -> int:
     with db.session() as conn:
-        ids = [r["id"] for r in conn.execute("SELECT id FROM feeds").fetchall()]
+        feed_ids = [r["id"] for r in conn.execute("SELECT id FROM feeds WHERE deleted = 0").fetchall()]
     total = 0
-    for feed_id in ids:
+    for feed_id in feed_ids:
         total += len(refresh_feed(feed_id))
     events.publish("feeds", {"refreshed": True, "new_episodes": total})
     return total

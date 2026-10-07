@@ -20,6 +20,10 @@ datas = [
     (str(ROOT / "tests" / "fixtures" / "arabic-sample.wav"), "tests/fixtures"),
 ]
 datas += collect_data_files("faster_whisper")  # Silero VAD model (assets/*.onnx)
+# Google sign-in client for Drive sync (written by the release workflow from repository secrets).
+_google_client = ROOT / "app" / "sync" / "google_client.json"
+if _google_client.exists():
+    datas.append((str(_google_client), "app/sync"))
 datas += collect_data_files("webview")
 
 binaries = collect_dynamic_libs("ctranslate2")

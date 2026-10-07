@@ -14,7 +14,7 @@ from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
-from . import audio, db, events, gpu_libs, jobs, paths
+from . import audio, db, events, gpu_libs, jobs, paths, sync
 from .api import router as api_router
 from .api.feeds import refresh_in_background
 from .version import APP_NAME, __version__
@@ -61,9 +61,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     if app.state.start_worker:
         jobs.worker.start()
         refresh_in_background()
+        if sync.oauth.signed_in():
+            sync.manager.start()
     log.info("%s %s started; data folder: %s", APP_NAME, __version__, paths.data_dir())
     yield
     jobs.worker.stop()
+    sync.manager.stop()
 
 
 def create_app(start_worker: bool = True) -> FastAPI:

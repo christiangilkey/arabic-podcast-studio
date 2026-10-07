@@ -15,7 +15,7 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-from . import arabic, audio, db, downloader, events, paths, transcriber
+from . import arabic, audio, db, downloader, events, paths, sync, transcriber
 from .transcriber import Segment, TranscriptionCancelled
 
 log = logging.getLogger(__name__)
@@ -213,6 +213,20 @@ def _store(episode_id: int, segments: list[Segment], model: str) -> int:
     return widx
 
 
+def _make_sync_copy(ep_id: int, source: Path) -> None:
+    """Compressed copy of the exact audio just transcribed, for other devices (only when syncing)."""
+    if not (sync.oauth.signed_in() and db.get_setting("sync_audio")):
+        return
+    dest = paths.audio_dir() / f"{ep_id}.sync.ogg"
+    try:
+        audio.encode_speech_copy(source, dest)
+    except audio.AudioError as exc:
+        log.warning("Couldn't make the sync audio copy for episode %s: %s", ep_id, exc)
+        return
+    with db.session() as conn:
+        _set_episode(conn, ep_id, sync_audio_path=str(dest), remote_audio=0)
+
+
 def _process(job: dict[str, Any], cancel: threading.Event) -> None:
     ep_id = job["episode_id"]
     with db.session() as conn:
@@ -253,6 +267,7 @@ def _process(job: dict[str, Any], cancel: threading.Event) -> None:
         if cancel.is_set():
             raise TranscriptionCancelled()
         n_words = _store(ep_id, segments, f"{engine.engine}:{engine.model_size}:{engine.device}")
+        _make_sync_copy(ep_id, audio_path)
         with db.session() as conn:
             conn.execute("UPDATE jobs SET state = 'done', finished_at = ? WHERE id = ?", (time.time(), job["id"]))
         if db.get_setting("delete_audio_after") and not is_temp:
@@ -261,6 +276,7 @@ def _process(job: dict[str, Any], cancel: threading.Event) -> None:
                 _set_episode(conn, ep_id, audio_path=None)
         log.info("Transcribed episode %s: %d segments, %d words", ep_id, len(segments), n_words)
         _episode_event(ep_id, status="done", progress=100, title=ep["title"], words=n_words)
+        sync.request()
     except (TranscriptionCancelled, downloader.Cancelled):
         if worker._stop.is_set():
             # App is quitting: keep the job queued so it restarts on next launch.

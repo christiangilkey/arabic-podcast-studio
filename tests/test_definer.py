@@ -44,12 +44,12 @@ def test_relay_forwards_and_filters_headers(client, monkeypatch):
 
 def test_definition_cache_roundtrip(client):
     key = "a" * 40
-    assert client.get(f"/api/definitions/{key}").status_code == 404
+    assert client.get(f"/api/definitions/{key}").json() is None
     data = {"word": "هون", "meaning": "here"}
     client.put(f"/api/definitions/{key}", json={"key": key, "word": "هون", "sentence": "انتي جديدة ⟦هون⟧", "data": data})
     assert client.get(f"/api/definitions/{key}").json() == data
     client.delete(f"/api/definitions/{key}")
-    assert client.get(f"/api/definitions/{key}").status_code == 404
+    assert client.get(f"/api/definitions/{key}").json() is None
 
 
 def test_cross_site_requests_are_rejected(client):
