@@ -43,8 +43,6 @@ jobs:
           - os: ubuntu-22.04      # oldest supported glibc, so the AppImage runs on newer distros
             target: linux
     runs-on: ${{ matrix.os }}
-    env:
-      APS_DATA_DIR: ${{ runner.temp }}/aps-smoke
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -56,6 +54,8 @@ jobs:
         run: |
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then V="${GITHUB_REF_NAME#v}"; else V="0.0.0-dev"; fi
           echo "VERSION=$V" >> "$GITHUB_ENV"
+          # Throwaway data folder for the smoke tests (runner context isn't allowed in job-level env).
+          echo "APS_DATA_DIR=$RUNNER_TEMP/aps-smoke" >> "$GITHUB_ENV"
           python - "$V" "$GITHUB_REPOSITORY" <<'EOF'
           import pathlib, re, sys
           p = pathlib.Path("app/version.py")
