@@ -8,6 +8,7 @@ import logging.handlers
 import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from urllib.parse import urlsplit
 
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, JSONResponse
@@ -19,6 +20,8 @@ from .api.feeds import refresh_in_background
 from .version import APP_NAME, __version__
 
 log = logging.getLogger(__name__)
+
+LOCAL_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
 
 def setup_logging() -> None:
@@ -69,6 +72,15 @@ def create_app(start_worker: bool = True) -> FastAPI:
                   openapi_url="/api/openapi.json")
     app.state.start_worker = start_worker
     app.include_router(api_router)
+
+    @app.middleware("http")
+    async def same_origin_only(request: Request, call_next):  # type: ignore[no-untyped-def]
+        # The server listens on localhost, which any website the user visits could also try to
+        # reach. Browsers always send Origin on cross-site requests, so reject foreign ones.
+        origin = request.headers.get("origin")
+        if origin and urlsplit(origin).hostname not in LOCAL_HOSTS:
+            return JSONResponse({"detail": "Cross-origin requests are not allowed."}, status_code=403)
+        return await call_next(request)
 
     @app.exception_handler(Exception)
     async def unhandled(request: Request, exc: Exception) -> JSONResponse:

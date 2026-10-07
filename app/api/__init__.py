@@ -2,8 +2,8 @@
 
 from fastapi import APIRouter
 
-from . import episodes, feeds, search, system, vocab
+from . import definer, episodes, feeds, search, system, vocab
 
 router = APIRouter(prefix="/api")
-for module in (feeds, episodes, search, vocab, system):
+for module in (feeds, episodes, search, vocab, definer, system):
     router.include_router(module.router)

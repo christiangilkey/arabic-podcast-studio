@@ -26,6 +26,12 @@ def export(include_audio: bool) -> Path:
     dst = sqlite3.connect(snapshot)
     try:
         src.backup(dst)  # consistent copy even while the worker is writing
+        # Never put API keys into a file the user may share or upload. VACUUM rewrites the
+        # file so the deleted values don't linger in free pages.
+        dst.execute(f"DELETE FROM settings WHERE key IN ({','.join('?' * len(db.SECRET_SETTINGS))})",
+                    db.SECRET_SETTINGS)
+        dst.commit()
+        dst.execute("VACUUM")
     finally:
         dst.close()
         src.close()
@@ -56,6 +62,7 @@ def import_(zip_path: Path) -> dict[str, Any]:
                     raise ValueError("The backup's database is damaged.")
             finally:
                 check.close()
+            keep = {k: v for k, v in db.get_settings().items() if k in db.SECRET_SETTINGS and v}
             src = sqlite3.connect(incoming)
             dst = db.connect()
             try:
@@ -63,6 +70,8 @@ def import_(zip_path: Path) -> dict[str, Any]:
             finally:
                 src.close()
                 dst.close()
+            if keep:
+                db.set_settings(keep)  # this device's API keys survive an import
         audio_dir = paths.audio_dir()
         restored = 0
         for name in names:

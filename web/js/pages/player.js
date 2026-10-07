@@ -6,6 +6,9 @@
 import { api, esc, h, on, toast, showMenu, hideMenu, download, saveSettings, state, requestNotifications } from "../app.js";
 import { activeWordIndex, sentenceBounds, formatTime } from "../wordlookup.js";
 import { statusInfo } from "./library.js";
+import { createWordBubble } from "../components/wordbubble.js";
+import { getDefinition } from "../define-service.js";
+import { markWord } from "../definer.js";
 
 const SPEEDS = [0.5, 0.6, 0.7, 0.75, 0.8, 0.85, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
 const LONG_PRESS_MS = 550;
@@ -202,10 +205,16 @@ export async function render(view, { id, query }) {
   }
 
   let disposed = false;
+  let clipEnd = null; // when set, playback pauses at this time (word/sentence preview)
+  let clipTimer = 0;
   function update() {
     if (disposed) return;
     let t = audio.currentTime;
-    if (loop && (t >= loop.end || t < loop.start - 0.5)) {
+    if (clipEnd !== null && t >= clipEnd) {
+      // End of a single-word/sentence clip: stop right after it.
+      clipEnd = null;
+      audio.pause();
+    } else if (loop && clipEnd === null && (t >= loop.end || t < loop.start - 0.5)) {
       audio.currentTime = t = loop.start;
     }
     setActive(activeWordIndex(starts, ends, t, 1.5));
@@ -223,7 +232,10 @@ export async function render(view, { id, query }) {
   audio.addEventListener("timeupdate", update);
 
   audio.addEventListener("play", () => { if (!disposed) { $("#play").textContent = "❚❚"; kick(); } });
-  audio.addEventListener("pause", () => { if (!disposed) { $("#play").textContent = "▶"; lsSet(posKey, audio.currentTime); kick(); } });
+  audio.addEventListener("pause", () => {
+    clipEnd = null; // any pause ends a word/sentence clip, so the next play continues normally
+    if (!disposed) { $("#play").textContent = "▶"; lsSet(posKey, audio.currentTime); kick(); }
+  });
   audio.addEventListener("seeked", () => { if (!disposed) kick(); });
   audio.addEventListener("ended", () => { if (!disposed) $("#play").textContent = "▶"; });
 
@@ -251,13 +263,14 @@ export async function render(view, { id, query }) {
   // ---------- transport ----------
   const play = () => audio.play().catch((e) => toast(`Playback failed: ${e.message}`, { error: true }));
   const seekTo = (t, autoplay = true) => {
+    clipEnd = null;
     audio.currentTime = Math.max(0, Math.min(t, duration || t));
     follow = true;
     $("#back").hidden = true;
     if (autoplay && audio.paused) play();
     kick();
   };
-  $("#play").onclick = () => (audio.paused ? play() : audio.pause());
+  $("#play").onclick = () => { clipEnd = null; audio.paused ? play() : audio.pause(); };
   $("#back5").onclick = () => seekTo(audio.currentTime - 5, false);
   $("#fwd5").onclick = () => seekTo(audio.currentTime + 5, false);
   $("#speed").onchange = (e) => {
@@ -268,6 +281,21 @@ export async function render(view, { id, query }) {
   };
   $("#seek").addEventListener("input", (e) => { seeking = true; $("#cur").textContent = formatTime(Number(e.target.value)); });
   $("#seek").addEventListener("change", (e) => { seeking = false; seekTo(Number(e.target.value), false); });
+
+  // ---------- clips: play one word or one sentence, then pause ----------
+  function playClip(start, end) {
+    const from = Math.max(0, start - 0.04);
+    clipEnd = end + 0.12;
+    audio.currentTime = from;
+    if (audio.paused) play();
+    kick();
+    // Backup stop in case animation frames are throttled.
+    clearTimeout(clipTimer);
+    const ms = ((clipEnd - from) / (audio.playbackRate || 1)) * 1000 + 250;
+    clipTimer = setTimeout(() => {
+      if (clipEnd !== null && audio.currentTime >= clipEnd - 0.2) { clipEnd = null; audio.pause(); }
+    }, ms);
+  }
 
   // ---------- loop ----------
   function setLoop(first, last) {
@@ -319,7 +347,7 @@ export async function render(view, { id, query }) {
     if (sel && !sel.isCollapsed && sel.toString().trim()) return; // user is selecting text
     if (down && Math.hypot(e.clientX - down.x, e.clientY - down.y) > 5) return; // drag
     if (e.shiftKey || e.altKey || e.metaKey || e.ctrlKey) return;
-    seekTo(starts[Number(wEl.dataset.i)]);
+    defineAt(Number(wEl.dataset.i));
   });
 
   tr.addEventListener("contextmenu", (e) => {
@@ -391,11 +419,75 @@ export async function render(view, { id, query }) {
           } catch (e) { toast(e.message, { error: true }); }
         },
       },
+      { label: "📖 Define", run: () => defineAt(i, j) },
       { label: "⧉ Copy", run: () => copyText(target.text) },
       { label: "▶ Play from here", run: () => seekTo(starts[i]) },
       { label: "⟲ Loop this sentence", run: () => setLoop(si, sj) },
     ]);
   }
+
+  // ---------- definition bubble ----------
+  let bubbleTarget = null; // {i, j, si, sj, text}
+
+  function sentenceText(a, b) { return texts.slice(a, b + 1).join(" "); }
+
+  function contextFor(i, j) {
+    const [si, sj] = sentenceBounds(texts, segOf, i, j);
+    const prev = si > 0 ? sentenceBounds(texts, segOf, si - 1) : null;
+    const next = sj < n - 1 ? sentenceBounds(texts, segOf, sj + 1) : null;
+    const word = texts.slice(i, j + 1).join(" ").replace(EDGE_PUNCT, "") || texts[i];
+    return {
+      si, sj, word,
+      ctx: {
+        word,
+        marked: markWord(texts.slice(si, sj + 1), i - si, j - si),
+        before: prev ? sentenceText(prev[0], prev[1]) : "",
+        after: next ? sentenceText(next[0], next[1]) : "",
+        podcast: ep.feed_title,
+        episode: ep.title,
+      },
+    };
+  }
+
+  const bubble = createWordBubble($(".transcript-wrap"), {
+    fetch: (ctx, refresh) => getDefinition(ctx, refresh),
+    onPlayWord: () => bubbleTarget && playClip(starts[bubbleTarget.i], ends[bubbleTarget.j]),
+    onPlaySentence: () => bubbleTarget && playClip(starts[bubbleTarget.si], ends[bubbleTarget.sj]),
+    onPlayFrom: () => bubbleTarget && seekTo(starts[bubbleTarget.i]),
+    onSettings: () => (location.hash = "#/settings"),
+    onSave: async (def) => {
+      const t = bubbleTarget;
+      const notes = def ? [def.lemma && `Dictionary form: ${def.lemma}`, def.root && `Root: ${def.root}`,
+        def.pos, def.dialect_note].filter(Boolean).join(" · ") : "";
+      try {
+        await api("/vocab", {
+          method: "POST",
+          body: { text: def && def.vocalized ? def.vocalized : t.text, sentence: sentenceText(t.si, t.sj),
+                  episode_id: id, start: starts[t.i], end: ends[t.j], sent_start: starts[t.si], sent_end: ends[t.sj],
+                  meaning: def ? def.meaning : "", notes },
+        });
+        toast(`Saved “${t.text}” to vocab`, { action: { label: "View", run: () => (location.hash = "#/vocab") } });
+      } catch (e) {
+        toast(e.message, { error: true });
+        throw e;
+      }
+    },
+  });
+
+  function defineAt(i, j = i) {
+    const c = contextFor(i, j);
+    bubbleTarget = { i, j, si: c.si, sj: c.sj, text: c.word };
+    playClip(starts[i], ends[j]);
+    bubble.show(wordEls[i], c.ctx);
+  }
+
+  tr.addEventListener("scroll", () => bubble.position(), { passive: true });
+  const onResize = () => bubble.position();
+  window.addEventListener("resize", onResize);
+  const onOutside = (e) => {
+    if (bubble.open && !e.target.closest(".word-bubble") && !e.target.closest(".w") && !e.target.closest("#ctxmenu")) bubble.hide();
+  };
+  document.addEventListener("pointerdown", onOutside);
 
   // ---------- header actions ----------
   const safe = ep.title.replace(/[\\/:*?"<>|]+/g, " ").trim().slice(0, 120) || "transcript";
@@ -422,7 +514,7 @@ export async function render(view, { id, query }) {
     if (e.key === " " ) { e.preventDefault(); audio.paused ? play() : audio.pause(); }
     else if (e.key === "ArrowLeft") { e.preventDefault(); seekTo(audio.currentTime - 5, false); }
     else if (e.key === "ArrowRight") { e.preventDefault(); seekTo(audio.currentTime + 5, false); }
-    else if (e.key === "Escape") clearLoop();
+    else if (e.key === "Escape") { if (bubble.open) bubble.hide(); else clearLoop(); }
   };
   document.addEventListener("keydown", onKey);
 
@@ -450,6 +542,10 @@ export async function render(view, { id, query }) {
 
   return () => {
     disposed = true;
+    clearTimeout(clipTimer);
+    bubble.hide();
+    window.removeEventListener("resize", onResize);
+    document.removeEventListener("pointerdown", onOutside);
     lsSet(posKey, audio.currentTime);
     audio.pause();
     delete window.__apsAudio;

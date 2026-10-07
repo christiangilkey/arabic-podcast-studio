@@ -114,6 +114,17 @@ CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
 );
+
+-- AI word definitions, cached per (word, marked sentence, explanation language).
+CREATE TABLE IF NOT EXISTS definitions (
+    key        TEXT PRIMARY KEY,
+    word       TEXT NOT NULL,
+    sentence   TEXT NOT NULL,
+    data       TEXT NOT NULL,
+    provider   TEXT NOT NULL DEFAULT '',
+    model      TEXT NOT NULL DEFAULT '',
+    created_at REAL NOT NULL
+);
 """
 
 _init_lock = threading.Lock()
@@ -181,7 +192,21 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "font_size": 26,                # transcript font size in px
     "welcome_seen": False,
     "beam_size": 5,
+    # AI word definitions (users bring their own API key).
+    "definer_provider": "claude",
+    "definer_language": "English",
+    "definer_model_claude": "",
+    "definer_model_gemini": "",
+    "definer_model_openai": "",
+    "definer_model_grok": "",
+    "llm_key_claude": "",
+    "llm_key_gemini": "",
+    "llm_key_openai": "",
+    "llm_key_grok": "",
 }
+
+# Settings that hold secrets: never exported in backups.
+SECRET_SETTINGS = ("llm_key_claude", "llm_key_gemini", "llm_key_openai", "llm_key_grok")
 
 
 def get_settings() -> dict[str, Any]:

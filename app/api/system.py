@@ -18,7 +18,7 @@ from ..version import APP_NAME, GITHUB_REPO, __version__
 router = APIRouter(tags=["system"])
 
 ALLOWED_SETTINGS = {"model_size", "delete_audio_after", "stream_from_source", "theme", "font_size",
-                    "welcome_seen", "beam_size"}
+                    "welcome_seen", "beam_size", *db.DEFAULT_SETTINGS.keys()}
 
 
 @router.get("/events")
