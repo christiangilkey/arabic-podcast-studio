@@ -1,0 +1,13 @@
+NVIDIA cuBLAS and cuDNN (optional GPU acceleration download)
+==========================================================
+
+These libraries are NOT included in the installer. If you choose "Install GPU
+acceleration" in Settings, the app downloads NVIDIA's official redistributable packages
+(nvidia-cublas-cu12 and nvidia-cudnn-cu12) directly from the Python Package Index
+(https://pypi.org/) and verifies their SHA-256 checksums.
+
+They are governed by NVIDIA's license agreements:
+  * CUDA Toolkit EULA: https://docs.nvidia.com/cuda/eula/index.html
+  * cuDNN Software License Agreement: https://docs.nvidia.com/deeplearning/cudnn/latest/reference/eula.html
+
+Copyright (c) NVIDIA Corporation. All rights reserved.

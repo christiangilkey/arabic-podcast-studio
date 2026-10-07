@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd" xmlns:media="http://search.yahoo.com/mrss/">
+  <channel>
+    <title></title>
+    <item>
+      <title>No audio here</title>
+      <guid>text-only</guid>
+      <link>https://example.com/blog</link>
+    </item>
+    <item>
+      <guid>untitled</guid>
+      <enclosure url="https://cdn.example.com/untitled.mp3" type="audio/mpeg"/>
+    </item>
+    <item>
+      <title>Missing guid</title>
+      <enclosure url="https://cdn.example.com/no-guid.m4a" type="audio/mp4"/>
+    </item>
+    <item>
+      <title>Junk metadata</title>
+      <guid>dup</guid>
+      <pubDate>not a date</pubDate>
+      <itunes:duration>about an hour</itunes:duration>
+      <enclosure url="https://cdn.example.com/junk.mp3" type="audio/mpeg" length="oops"/>
+    </item>
+    <item>
+      <title>Duplicate guid</title>
+      <guid>dup</guid>
+      <enclosure url="https://cdn.example.com/dup2.mp3"/>
+    </item>
+    <item>
+      <title>Untyped enclosure</title>
+      <guid>untyped</guid>
+      <enclosure url=" https://cdn.example.com/untyped.ogg?x=1 "/>
+    </item>
+    <item>
+      <title>Media RSS only</title>
+      <guid>media</guid>
+      <media:content url="https://cdn.example.com/media.mp3" type="audio/mpeg"/>
+    </item>
+  </channel>
+</rss>

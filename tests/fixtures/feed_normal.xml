@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">
+  <channel>
+    <title>بودكاست تجريبي</title>
+    <link>https://example.com</link>
+    <description>&lt;p&gt;وصف &lt;b&gt;البودكاست&lt;/b&gt;&lt;/p&gt;</description>
+    <itunes:image href="https://example.com/cover.jpg"/>
+    <item>
+      <title>الحلقة الثالثة</title>
+      <guid isPermaLink="false">ep-3</guid>
+      <pubDate>Mon, 05 Oct 2026 08:00:00 GMT</pubDate>
+      <itunes:duration>1:02:03</itunes:duration>
+      <itunes:image href="https://example.com/ep3.jpg"/>
+      <enclosure url="https://cdn.example.com/ep3.mp3" type="audio/mpeg" length="12345"/>
+      <description>وصف الحلقة</description>
+    </item>
+    <item>
+      <title>الحلقة الثانية</title>
+      <guid>ep-2</guid>
+      <pubDate>Mon, 28 Sep 2026 08:00:00 +0300</pubDate>
+      <itunes:duration>12:34</itunes:duration>
+      <enclosure url="https://cdn.example.com/ep2.m4a" type="audio/x-m4a" length="1"/>
+    </item>
+    <item>
+      <title>الحلقة الأولى</title>
+      <guid>ep-1</guid>
+      <pubDate>Mon, 21 Sep 2026 08:00:00 GMT</pubDate>
+      <itunes:duration>95</itunes:duration>
+      <enclosure url="https://cdn.example.com/ep1.mp3" type="audio/mpeg" length="1"/>
+    </item>
+  </channel>
+</rss>
