@@ -1,6 +1,6 @@
 // Vocab list: saved words/phrases with their sentence, notes, audio replay and export.
 
-import { api, esc, h, toast, download, fmtDate } from "../app.js";
+import { api, esc, h, toast, download, fmtDate, audioUrl } from "../app.js";
 import { formatTime } from "../wordlookup.js";
 
 function highlight(sentence, word) {
@@ -47,9 +47,9 @@ export async function render(view) {
   // Backup for when animation frames are paused (window in the background).
   audio.addEventListener("timeupdate", () => { if (audio.currentTime >= stopAt) audio.pause(); });
   async function playSnippet(episodeId, start, end) {
-    const src = `/api/episodes/${episodeId}/audio`;
-    if (!audio.src.endsWith(src)) {
-      audio.src = src;
+    if (audio.dataset.episode !== String(episodeId)) {
+      audio.dataset.episode = String(episodeId);
+      audio.src = await audioUrl(episodeId);
       await new Promise((res, rej) => {
         audio.addEventListener("loadedmetadata", res, { once: true });
         audio.addEventListener("error", () => rej(new Error("Couldn't load this episode's audio.")), { once: true });

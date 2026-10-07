@@ -77,10 +77,17 @@ jobs:
           import json, os, re, sys
           cid = os.environ["GOOGLE_CLIENT_ID"].strip().strip('"')
           secret = os.environ["GOOGLE_CLIENT_SECRET"].strip().strip('"')
+          def hint(v):  # describes a value without revealing it
+              quote = chr(34)
+              return (f"length {len(v)}, starts with a digit: {v[:1].isdigit()}, has quotes: {quote in v}, "
+                      f"has ':' or ',': {':' in v or ',' in v}, has spaces: {' ' in v}")
+          problems = []
           if not re.fullmatch(r"[0-9]+-[a-z0-9]+\.apps\.googleusercontent\.com", cid):
-              sys.exit("GOOGLE_CLIENT_ID doesn't look like a Google OAuth client ID")
+              problems.append("GOOGLE_CLIENT_ID should look like 1234-abcd.apps.googleusercontent.com (" + hint(cid) + ")")
           if not re.fullmatch(r"GOCSPX-[A-Za-z0-9_-]{20,}", secret):
-              sys.exit("GOOGLE_CLIENT_SECRET doesn't look like a Google OAuth client secret")
+              problems.append("GOOGLE_CLIENT_SECRET should look like GOCSPX-... (" + hint(secret) + ")")
+          if problems:
+              sys.exit(" | ".join(problems))
           json.dump({"client_id": cid, "client_secret": secret}, open("app/sync/google_client.json", "w"))
           print("Bundled Google client", cid[:12] + "...")
           EOF

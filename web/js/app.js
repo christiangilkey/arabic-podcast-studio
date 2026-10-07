@@ -119,6 +119,14 @@ on("episode", (e) => {
   }
 });
 
+// ---------- platform hooks (the Android app's shell provides its own versions) ----------
+export const platform = "desktop";
+
+/** URL the <audio> element should play for an episode. */
+export async function audioUrl(episodeId) {
+  return `/api/episodes/${episodeId}/audio`;
+}
+
 // ---------- downloads ----------
 export async function download(url, filename) {
   const bridge = window.pywebview && window.pywebview.api;

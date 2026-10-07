@@ -3,7 +3,7 @@
 // Performance: words are rendered once as <span>s. Each animation frame we binary-search
 // the sorted start times (O(log n)) and only touch the DOM when the active word changes.
 
-import { api, esc, h, on, toast, showMenu, hideMenu, download, saveSettings, state, requestNotifications } from "../app.js";
+import { api, esc, h, on, toast, showMenu, hideMenu, download, saveSettings, state, requestNotifications, audioUrl } from "../app.js";
 import { activeWordIndex, sentenceBounds, formatTime } from "../wordlookup.js";
 import { statusInfo } from "./library.js";
 import { createWordBubble } from "../components/wordbubble.js";
@@ -145,7 +145,7 @@ export async function render(view, { id, query }) {
   // ---------- audio ----------
   const audio = new Audio();
   audio.preload = "auto";
-  audio.src = `/api/episodes/${id}/audio`;
+  audio.src = await audioUrl(id);
   window.__apsAudio = audio; // handy for debugging from the devtools console
   let speed = lsGet("speed", 1);
   $("#speed").value = String(speed);
