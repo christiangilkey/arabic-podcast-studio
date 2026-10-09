@@ -1,0 +1,53 @@
+/* Phone layout on top of the shared desktop styles. */
+body { padding-top: env(safe-area-inset-top); }
+.topbar { padding: 6px 12px; }
+.brand span { display: inline; font-size: 15px; }
+
+.tabbar {
+  flex: none;
+  display: flex;
+  border-top: 1px solid var(--border);
+  background: var(--surface);
+  padding-bottom: env(safe-area-inset-bottom);
+}
+.tabbar a {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 6px 0 8px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.tabbar a:hover { text-decoration: none; }
+.tabbar a.active { color: var(--accent); font-weight: 600; }
+.tabbar .ico { font-size: 18px; line-height: 1.2; }
+/* The player has its own controls bar at the bottom; hide the tabs there. */
+body.in-player .tabbar { display: none; }
+
+/* Library: the feed list becomes a horizontal strip above the episodes. */
+.library { grid-template-columns: 1fr; grid-template-rows: auto 1fr; }
+.sidebar { border-right: none; border-bottom: 1px solid var(--border); max-height: none; padding: 8px 12px; gap: 8px; }
+.feed-list { flex-direction: row; overflow-x: auto; gap: 6px; padding-bottom: 4px; }
+.feed-item { flex: none; flex-direction: column; width: 84px; text-align: center; gap: 4px; padding: 4px; }
+.feed-item .t { font-size: 12px; -webkit-line-clamp: 2; }
+.feed-item .small { display: none; }
+.feed-item img, .feed-item .ph { width: 56px; height: 56px; }
+.lib-main { padding: 10px 12px 24px; }
+.lib-head img { width: 56px; height: 56px; }
+.lib-head h1 { font-size: 18px; }
+.toolbar { top: -10px; }
+.toolbar input[type=search] { width: 100% !important; }
+.ep { grid-template-columns: auto 44px 1fr; padding: 8px; gap: 8px; }
+.ep img, .ep .ph { width: 44px; height: 44px; }
+.ep .status { grid-column: 1 / -1; align-items: stretch; min-width: 0; }
+.ep .status .row { justify-content: flex-end; }
+
+.page { padding: 12px 12px 24px; }
+.settings select, .settings input[type=text], .settings input[type=password] { width: 100%; }
+.stack-label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+.vocab-item { grid-template-columns: 1fr; }
+.toasts { left: 12px; right: 12px; bottom: calc(70px + env(safe-area-inset-bottom)); }
+.toast { max-width: none; }
+button, .btn { min-height: 38px; }

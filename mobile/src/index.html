@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <title>Arabic Podcast Studio</title>
+  <link rel="icon" href="icons/icon-64.png">
+  <link rel="stylesheet" href="css/app.css">
+  <link rel="stylesheet" href="css/mobile.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="#/"><img src="icons/icon-64.png" alt="" width="26" height="26"><span>Arabic Podcast Studio</span></a>
+  </header>
+  <main id="view" tabindex="-1"></main>
+  <nav class="tabbar" aria-label="Sections">
+    <a href="#/" data-nav="library"><span class="ico">🎧</span>Library</a>
+    <a href="#/search" data-nav="search"><span class="ico">🔍</span>Search</a>
+    <a href="#/vocab" data-nav="vocab"><span class="ico">★</span>Vocab</a>
+    <a href="#/settings" data-nav="settings"><span class="ico">⚙</span>Settings</a>
+  </nav>
+  <div id="toasts" class="toasts" aria-live="polite"></div>
+  <div id="ctxmenu" class="ctxmenu" role="menu" hidden></div>
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

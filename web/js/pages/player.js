@@ -285,7 +285,7 @@ export async function render(view, { id, query }) {
   // ---------- clips: play one word or one sentence, then pause ----------
   function playClip(start, end) {
     const from = Math.max(0, start - 0.04);
-    clipEnd = end + 0.12;
+    clipEnd = end + 0.03;  // just past the word: more would start highlighting the next one
     audio.currentTime = from;
     if (audio.paused) play();
     kick();

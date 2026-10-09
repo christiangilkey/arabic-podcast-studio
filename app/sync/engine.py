@@ -43,6 +43,7 @@ class Result:
     merged: dict[str, int] = field(default_factory=lambda: {"feeds": 0, "episodes": 0, "vocab": 0, "definitions": 0})
     library_uploaded: bool = False
     requested_transcriptions: list[int] = field(default_factory=list)
+    new_feeds: list[int] = field(default_factory=list)  # added on another device; need an RSS fetch here
 
     def summary(self) -> dict[str, Any]:
         return {"uploaded_transcripts": self.uploaded_transcripts,
@@ -107,6 +108,8 @@ def merge(remote: dict[str, Any], result: Result) -> list[tuple[int, str, float]
                     "updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
                     (r["uid"], r["url"], r["title"], r["description"] or "", r["image"], r["link"],
                      r["auto_transcribe"], r["deleted"], r["created_at"], r["updated_at"]))
+                if not r["deleted"]:
+                    result.new_feeds.append(int(conn.execute("SELECT last_insert_rowid()").fetchone()[0]))
                 result.merged["feeds"] += 1
             elif _newer(r, local):
                 conn.execute(
@@ -116,6 +119,8 @@ def merge(remote: dict[str, Any], result: Result) -> list[tuple[int, str, float]
                      r["updated_at"], local["id"]))
                 if r["deleted"] and not local["deleted"]:
                     _purge_feed_episodes(conn, local["id"])
+                elif local["deleted"] and not r["deleted"]:
+                    result.new_feeds.append(local["id"])  # re-subscribed elsewhere
                 result.merged["feeds"] += 1
 
         # Episodes

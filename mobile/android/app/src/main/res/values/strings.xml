@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Arabic Podcast Studio</string>
+    <string name="title_activity_main">Arabic Podcast Studio</string>
+    <string name="package_name">io.github.christiangilkey.arabicpodcaststudio</string>
+    <string name="custom_url_scheme">io.github.christiangilkey.arabicpodcaststudio</string>
+</resources>

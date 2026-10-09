@@ -78,6 +78,14 @@ class Manager:
             drive = GoogleDrive(lambda force: oauth.access_token(force))
             settings = db.get_settings()
             result = engine.run(drive, device_id(), bool(settings.get("sync_audio", True)), can_transcribe=True)
+            if result.new_feeds:
+                # Podcasts added on the phone (or another computer): fetch their episodes here,
+                # then sync again so every device gets the episode list.
+                from .. import feeds as feeds_mod
+
+                for feed_id in result.new_feeds:
+                    feeds_mod.refresh_feed(feed_id)
+                self.request(delay=1)
             summary = result.summary()
             self._publish(state="idle", last_sync=time.time(), last_result=summary)
             if result.downloaded_transcripts or any(result.merged.values()):

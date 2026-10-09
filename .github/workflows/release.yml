@@ -163,8 +163,13 @@ jobs:
             dist/*.AppImage
           if-no-files-found: error
 
+  android:
+    needs: test
+    uses: ./.github/workflows/android.yml
+    secrets: inherit
+
   release:
-    needs: build
+    needs: [build, android]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     steps:

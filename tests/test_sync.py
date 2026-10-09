@@ -251,3 +251,19 @@ def test_audio_copy_upload(world, monkeypatch):
     assert drive.by_name(engine.audio_name(uid))["data"] == b"opus"
     lib = engine._ungz(drive.by_name("library.json.gz")["data"])
     assert next(e for e in lib["episodes"] if e["uid"] == uid)["remote_audio"] == 1
+
+
+def test_feed_added_on_phone_is_flagged_for_rss_fetch(world):
+    drive, a, b = world
+    a.sync(drive)
+    lib = engine._ungz(drive.by_name("library.json.gz")["data"])
+    url = "https://phone.example/rss"
+    lib["feeds"].append({"uid": ids.feed_uid(url), "url": url, "title": "phone.example", "description": "",
+                         "image": None, "link": None, "auto_transcribe": 0, "deleted": 0,
+                         "created_at": time.time(), "updated_at": time.time()})
+    drive.upload("library.json.gz", engine._gz(lib), "application/gzip", drive.by_name("library.json.gz")["id"])
+    r = a.sync(drive)
+    assert len(r.new_feeds) == 1
+    with a:
+        with db.session() as conn:
+            assert conn.execute("SELECT url FROM feeds WHERE id = ?", (r.new_feeds[0],)).fetchone()[0] == url
