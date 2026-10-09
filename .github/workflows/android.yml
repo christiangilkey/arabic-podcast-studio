@@ -33,7 +33,10 @@ jobs:
           if [[ "$GITHUB_REF" == refs/tags/v* ]]; then V="${GITHUB_REF_NAME#v}"; else V="0.0.0-dev.${GITHUB_RUN_NUMBER}"; fi
           IFS=. read -r MA MI PA <<< "${V%%-*}"
           echo "APP_VERSION=$V" >> "$GITHUB_ENV"
-          echo "APP_VERSION_CODE=$(( ${MA:-0} * 10000 + ${MI:-0} * 100 + ${PA:-0} ))" >> "$GITHUB_ENV"
+          CODE=$(( ${MA:-0} * 10000 + ${MI:-0} * 100 + ${PA:-0} ))
+          # Test builds (no tag) get 1: Android needs >= 1, and releases (0.4.0 = 400) stay newer.
+          if [ "$CODE" -lt 1 ]; then CODE=1; fi
+          echo "APP_VERSION_CODE=$CODE" >> "$GITHUB_ENV"
 
       - name: Signing key
         shell: bash
