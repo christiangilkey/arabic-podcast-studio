@@ -68,16 +68,35 @@ class GoogleDrive:
     def download(self, file_id: str) -> bytes:
         return self._request("GET", f"{API}/files/{file_id}", params={"alt": "media"}).content
 
-    def download_to(self, file_id: str, dest: Path) -> None:
+    def download_to(self, file_id: str, dest: Path,
+                    progress: Callable[[int, int | None], None] | None = None) -> None:
         tmp = dest.with_name(dest.name + ".part")
         headers = {"Authorization": f"Bearer {self._token(False)}"}
         with self._client.stream("GET", f"{API}/files/{file_id}", params={"alt": "media"}, headers=headers) as resp:
             if resp.status_code >= 400:
                 raise DriveError(f"Google Drive download failed ({resp.status_code}).")
+            length = resp.headers.get("content-length")
+            total = int(length) if length and length.isdigit() else None
+            done = 0
             with open(tmp, "wb") as fh:
                 for chunk in resp.iter_bytes(1 << 16):
                     fh.write(chunk)
+                    done += len(chunk)
+                    if progress:
+                        progress(done, total)
         os.replace(tmp, dest)
+
+    def stream(self, file_id: str, range_header: str | None = None) -> httpx.Response:
+        """Open a (partial) download for streaming; the caller must close the response."""
+        headers = {"Authorization": f"Bearer {self._token(False)}"}
+        if range_header:
+            headers["Range"] = range_header
+        req = self._client.build_request("GET", f"{API}/files/{file_id}", params={"alt": "media"}, headers=headers)
+        resp = self._client.send(req, stream=True)
+        if resp.status_code >= 400:
+            resp.close()
+            raise DriveError(f"Google Drive download failed ({resp.status_code}).")
+        return resp
 
     def upload(self, name: str, data: bytes | Path, mime: str, file_id: str | None = None) -> dict[str, Any]:
         meta: dict[str, Any] = {"name": name}
@@ -103,8 +122,14 @@ class GoogleDrive:
                               json=meta if not file_id else {},
                               headers={"X-Upload-Content-Type": mime, "X-Upload-Content-Length": str(size)})
         session_url = start.headers["Location"]
-        with open(path, "rb") as fh:
-            resp = self._client.put(session_url, content=fh.read(), headers={"Content-Type": mime})
+        def chunks():
+            with open(path, "rb") as fh:
+                while block := fh.read(1 << 20):
+                    yield block
+
+        resp = self._client.put(session_url, content=chunks(),
+                                headers={"Content-Type": mime, "Content-Length": str(size)},
+                                timeout=httpx.Timeout(None, connect=20))
         if resp.status_code >= 400:
             raise DriveError(f"Google Drive upload failed ({resp.status_code}): {resp.text[:200]}")
         return resp.json()

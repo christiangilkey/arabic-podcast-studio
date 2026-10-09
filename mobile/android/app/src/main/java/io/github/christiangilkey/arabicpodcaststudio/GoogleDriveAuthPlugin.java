@@ -68,6 +68,13 @@ public class GoogleDriveAuthPlugin extends Plugin {
             .addOnFailureListener(e -> call.reject("Google sign-in failed: " + e.getMessage(), e));
     }
 
+    /** Hands the current access token to the video streamer (see DriveMediaWebViewClient). */
+    @PluginMethod
+    public void setMediaToken(PluginCall call) {
+        DriveMediaWebViewClient.setToken(call.getString("token"));
+        call.resolve();
+    }
+
     private void onConsentResult(ActivityResult r) {
         PluginCall call = pending;
         pending = null;

@@ -1,6 +1,6 @@
 // Library: feeds sidebar, episode list with live status, multi-select transcription.
 
-import { api, esc, h, fmtDate, fmtDuration, on, toast, requestNotifications } from "../app.js";
+import { api, esc, h, fmtDate, fmtDuration, on, toast, requestNotifications, uploadVideo } from "../app.js";
 
 const FILTERS = [
   ["", "All"],
@@ -11,6 +11,9 @@ const FILTERS = [
   ["failed", "Failed"],
 ];
 const PAGE = 100;
+
+export const isVideo = (ep) => (ep.audio_type || "").startsWith("video/");
+export const isLocalFeed = (url) => (url || "").startsWith("local:");
 
 export function statusInfo(ep) {
   const p = Math.round(ep.progress || 0);
@@ -41,7 +44,13 @@ export async function render(view, { feedId, query }) {
           </div>
         </form>
         <div class="row">
-          <button type="button" id="refresh" class="ghost" title="Check all feeds for new episodes">⟳ Refresh feeds</button>
+          <button type="button" id="refresh" class="ghost" title="Check feeds for new episodes and sync with Google Drive (picks up anything queued on your phone)">⟳ Refresh &amp; sync</button>
+          <button type="button" id="add-video" class="ghost" title="Add a video file of your own; it's transcribed and stored in your Google Drive">🎬 Add video</button>
+          <input type="file" id="video-file" accept="video/*,.mkv" hidden>
+        </div>
+        <div class="upload-status" id="upload-status" hidden>
+          <div class="small"><span id="upload-name"></span> <span class="muted" id="upload-pct"></span></div>
+          <div class="progress"><i id="upload-bar"></i></div>
         </div>
         <div class="feed-list" id="feed-list"></div>
       </aside>
@@ -71,7 +80,7 @@ export async function render(view, { feedId, query }) {
     const all = h(`<a class="feed-item${feedId ? "" : " active"}" href="#/"><div class="ph all">🎧</div><div><div class="t">All episodes</div></div></a>`);
     list.append(all);
     for (const f of feeds) {
-      const img = f.image ? `<img src="${esc(f.image)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : `<div class="ph"></div>`;
+      const img = isLocalFeed(f.url) ? `<div class="ph all">🎬</div>` : f.image ? `<img src="${esc(f.image)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : `<div class="ph"></div>`;
       list.append(h(`<a class="feed-item${f.id === feedId ? " active" : ""}" href="#/feed/${f.id}">
         ${img}<div style="min-width:0"><div class="t">${esc(f.title)}</div>
         <div class="small muted">${f.done_count || 0}/${f.episode_count} transcribed${f.last_error ? " · ⚠" : ""}</div></div></a>`));
@@ -91,6 +100,12 @@ export async function render(view, { feedId, query }) {
     }
     const f = feeds.find((x) => x.id === feedId);
     if (!f) { location.hash = "#/"; return; }
+    if (isLocalFeed(f.url)) {
+      head.append(h(`<div class="lib-head"><div class="ph video-ph">🎬</div><div class="meta"><h1>${esc(f.title)}</h1>
+        <div class="desc small">Video files you added yourself. They're transcribed on your computer and stored in your
+        Google Drive, so every device can play them. Use “🎬 Add video” to add more.</div></div></div>`));
+      return;
+    }
     const el = h(`<div class="lib-head">
       ${f.image ? `<img src="${esc(f.image)}" alt="" referrerpolicy="no-referrer">` : ""}
       <div class="meta">
@@ -148,7 +163,8 @@ export async function render(view, { feedId, query }) {
       <div class="status"></div>
     </div>`);
     const title = row.querySelector(".title");
-    if (ep.status === "done") {
+    if (isVideo(ep)) title.dataset.video = "1";
+    if (ep.status === "done" || isVideo(ep)) {
       const a = h(`<a href="#/episode/${ep.id}"></a>`);
       a.textContent = ep.title;
       title.append(a);
@@ -178,7 +194,7 @@ export async function render(view, { feedId, query }) {
     };
     switch (ep.status) {
       case "done":
-        btn("Open", "primary", () => (location.hash = `#/episode/${ep.id}`));
+        btn(isVideo(ep) ? "Watch" : "Open", "primary", () => (location.hash = `#/episode/${ep.id}`));
         break;
       case "failed":
         btn("Retry", "", () => transcribe([ep.id]));
@@ -191,6 +207,17 @@ export async function render(view, { feedId, query }) {
       default:
         btn("Transcribe", "", () => transcribe([ep.id]));
     }
+    if (isVideo(ep) && ep.status !== "done") btn("Watch", "ghost", () => (location.hash = `#/episode/${ep.id}`));
+    if (isLocalFeed(ep.feed_url)) {
+      btn("Delete", "ghost danger", async () => {
+        if (!confirm(`Delete “${ep.title}”? The video and its transcript are removed from this device and from your Google Drive. Saved vocab is kept.`)) return;
+        try {
+          await api(`/episodes/${ep.id}`, { method: "DELETE" });
+          row.remove();
+          scheduleReload();
+        } catch (e) { toast(e.message, { error: true }); }
+      });
+    }
     box.append(line);
     if (st.bar !== undefined) box.append(h(`<div class="progress"><i style="width:${st.bar}%"></i></div>`));
     if (ep.status === "failed" && ep.error) {
@@ -198,9 +225,9 @@ export async function render(view, { feedId, query }) {
       err.textContent = ep.error;
       box.append(err);
     }
-    // Title becomes a link once done.
+    // Title becomes a link once done (videos can be watched straight away).
     const title = row.querySelector(".title");
-    if (ep.status === "done" && !title.querySelector("a")) {
+    if ((ep.status === "done" || isVideo(ep)) && !title.querySelector("a")) {
       title.innerHTML = "";
       const a = h(`<a href="#/episode/${ep.id}"></a>`);
       a.textContent = ep.title;
@@ -266,14 +293,15 @@ export async function render(view, { feedId, query }) {
     e.target.textContent = "Refreshing…";
     try {
       const r = await api(feedId ? `/feeds/refresh?feed_id=${feedId}` : "/feeds/refresh", { method: "POST" });
-      toast(r.already_running ? "Already refreshing…" : r.new_episodes ? `${r.new_episodes} new episode(s).` : "No new episodes.");
+      const found = r.new_episodes ? `${r.new_episodes} new episode(s).` : "No new episodes.";
+      toast(r.already_running ? "Already refreshing…" : r.synced ? `${found} Synced with Google Drive.` : found);
       await loadFeeds();
       await loadEpisodes();
     } catch (err) {
       toast(err.message, { error: true });
     } finally {
       e.target.disabled = false;
-      e.target.textContent = "⟳ Refresh feeds";
+      e.target.textContent = "⟳ Refresh & sync";
     }
   };
   $("#select-all").onchange = (e) => {
@@ -292,6 +320,33 @@ export async function render(view, { feedId, query }) {
     updateSelection();
   };
   $("#more").onclick = () => loadEpisodes(true);
+  $("#add-video").onclick = () => $("#video-file").click();
+  $("#video-file").onchange = async (e) => {
+    const file = e.target.files[0];
+    e.target.value = "";
+    if (!file) return;
+    const box = $("#upload-status");
+    const btn = $("#add-video");
+    btn.disabled = true;
+    box.hidden = false;
+    $("#upload-name").textContent = file.name;
+    const paint = (frac) => {
+      $("#upload-pct").textContent = `${Math.round(frac * 100)}%`;
+      $("#upload-bar").style.width = `${frac * 100}%`;
+    };
+    paint(0);
+    try {
+      const ep = await uploadVideo(file, paint);
+      toast(`Added “${ep.title}”. ${ep.note || "It's being transcribed now."}`);
+      location.hash = `#/feed/${ep.feed_id}`;
+      scheduleReload();
+    } catch (err) {
+      toast(err.message, { error: true });
+    } finally {
+      btn.disabled = false;
+      box.hidden = true;
+    }
+  };
   let debounce;
   $("#title-filter").oninput = (e) => {
     clearTimeout(debounce);

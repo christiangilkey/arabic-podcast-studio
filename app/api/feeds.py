@@ -31,7 +31,7 @@ def list_feeds() -> list[dict[str, Any]]:
                       COUNT(e.id) AS episode_count,
                       SUM(e.status = 'done') AS done_count,
                       MAX(e.published) AS latest
-               FROM feeds f LEFT JOIN episodes e ON e.feed_id = f.id
+               FROM feeds f LEFT JOIN episodes e ON e.feed_id = f.id AND e.deleted = 0
                WHERE f.deleted = 0
                GROUP BY f.id ORDER BY f.title COLLATE NOCASE"""
         ).fetchall()
@@ -67,6 +67,9 @@ def delete_feed(feed_id: int) -> dict[str, bool]:
     from .. import jobs
 
     with db.session() as conn:
+        feed = conn.execute("SELECT url FROM feeds WHERE id = ?", (feed_id,)).fetchone()
+        if feed and feed["url"].startswith("local:"):
+            raise HTTPException(400, "Delete videos one by one; “My videos” itself can't be removed.")
         eps = conn.execute("SELECT id, audio_path, sync_audio_path FROM episodes WHERE feed_id = ?",
                            (feed_id,)).fetchall()
     for ep in eps:
@@ -99,7 +102,12 @@ def refresh(feed_id: int | None = None) -> dict[str, Any]:
             new = feeds.refresh_all()
     finally:
         _refresh_lock.release()
-    return {"ok": True, "new_episodes": new}
+    # Also pull from Drive now, so episodes queued on the phone show up without waiting
+    # for the periodic sync.
+    synced = False
+    if sync.oauth.signed_in():
+        synced = sync.manager.sync_now().get("state") != "error"
+    return {"ok": True, "new_episodes": new, "synced": synced}
 
 
 def refresh_in_background() -> None:

@@ -1,17 +1,20 @@
 // Episode player: audio controls + RTL transcript with word-level highlighting.
+// Videos ("My videos") play in a <video> with tappable captions on top and the full
+// transcript in a panel beside it (desktop) or below it (phone), toggled by a button.
 //
 // Performance: words are rendered once as <span>s. Each animation frame we binary-search
 // the sorted start times (O(log n)) and only touch the DOM when the active word changes.
 
 import { api, esc, h, on, toast, showMenu, hideMenu, download, saveSettings, state, requestNotifications, audioUrl } from "../app.js";
 import { activeWordIndex, sentenceBounds, formatTime } from "../wordlookup.js";
-import { statusInfo } from "./library.js";
+import { statusInfo, isVideo } from "./library.js";
 import { createWordBubble } from "../components/wordbubble.js";
 import { getDefinition } from "../define-service.js";
 import { markWord } from "../definer.js";
 
 const SPEEDS = [0.5, 0.6, 0.7, 0.75, 0.8, 0.85, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
 const LONG_PRESS_MS = 550;
+const CAPTION_WORDS = 12; // longest caption line, in words
 const EDGE_PUNCT = /^[\s«"'“(\[]+|[\s.,!?؟،؛:"'”»)\]…]+$/gu;
 
 function lsGet(key, fallback) {
@@ -45,6 +48,13 @@ function renderPending(view, ep) {
       <a class="btn" href="#/">Back to library</a></div>
     </div></div>`);
   panel.querySelector("h1").textContent = ep.title;
+  if (isVideo(ep)) {
+    const v = h(`<video class="pending-video" controls playsinline preload="metadata"></video>`);
+    audioUrl(ep.id).then((url) => { v.src = url; }).catch(() => {});
+    panel.querySelector(".status-panel").prepend(v);
+    panel.querySelector("#st").insertAdjacentHTML("afterend",
+      `<p class="small muted">You can watch it now; captions and the transcript appear once it's transcribed.</p>`);
+  }
   view.append(panel);
   const paint = () => {
     const st = statusInfo(ep);
@@ -85,8 +95,13 @@ export async function render(view, { id, query }) {
 
   // ---------- markup ----------
   const img = ep.image || ep.feed_image;
+  const vid = isVideo(ep);
+  const transcriptHtml = `<div class="transcript-wrap">
+        <div class="transcript ar" id="transcript" lang="ar" dir="rtl" tabindex="0"></div>
+        <button type="button" class="back-to-current primary" id="back" hidden>↓ Back to current</button>
+      </div>`;
   view.append(h(`
-    <div class="player">
+    <div class="player${vid ? " video" : ""}">
       <div class="player-head">
         <a class="btn ghost" href="#/feed/${ep.feed_id}" title="Back">←</a>
         ${img ? `<img src="${esc(img)}" alt="" referrerpolicy="no-referrer">` : ""}
@@ -95,6 +110,9 @@ export async function render(view, { id, query }) {
           <div class="small muted">${esc(ep.feed_title)} · ${n.toLocaleString()} words</div>
         </div>
         <div class="row">
+          ${vid ? `<button type="button" id="toggle-panel" title="Show or hide the full transcript (T)">≡ Transcript</button>
+          <button type="button" class="ghost" id="toggle-cc" title="Show or hide captions (C)">CC</button>
+          <button type="button" class="ghost" id="fullscreen" title="Full screen (F)">⛶</button>` : ""}
           <button type="button" class="ghost" id="font-down" title="Smaller text">A−</button>
           <button type="button" class="ghost" id="font-up" title="Larger text">A+</button>
           <button type="button" id="exp-txt">TXT</button>
@@ -102,10 +120,13 @@ export async function render(view, { id, query }) {
           <button type="button" id="exp-vtt">VTT</button>
         </div>
       </div>
-      <div class="transcript-wrap">
-        <div class="transcript ar" id="transcript" lang="ar" dir="rtl" tabindex="0"></div>
-        <button type="button" class="back-to-current primary" id="back" hidden>↓ Back to current</button>
-      </div>
+      ${vid ? `<div class="stage" id="stage">
+        <div class="screen" id="screen">
+          <video id="video" playsinline></video>
+          <div class="captions" id="captions" lang="ar" dir="rtl"></div>
+        </div>
+        ${transcriptHtml}
+      </div>` : transcriptHtml}
       <div class="controls">
         <div class="seekrow">
           <span id="cur">0:00</span>
@@ -143,7 +164,7 @@ export async function render(view, { id, query }) {
   const wordEls = tr.querySelectorAll(".w");
 
   // ---------- audio ----------
-  const audio = new Audio();
+  const audio = vid ? $("#video") : new Audio();
   audio.preload = "auto";
   audio.src = await audioUrl(id);
   window.__apsAudio = audio; // handy for debugging from the devtools console
@@ -164,7 +185,8 @@ export async function render(view, { id, query }) {
   }, { once: true });
   audio.addEventListener("error", () => {
     if (disposed) return;
-    toast("Couldn't load the audio. If it streams from the podcast's server, check your connection.", { error: true });
+    toast(vid ? "Couldn't load the video. It streams from your Google Drive: check your connection and that you're signed in."
+      : "Couldn't load the audio. If it streams from the podcast's server, check your connection.", { error: true });
   });
 
   // ---------- highlight + follow ----------
@@ -185,12 +207,42 @@ export async function render(view, { id, query }) {
     tr.scrollTo({ top: tr.scrollTop + delta, behavior: Math.abs(delta) > cr.height * 1.5 ? "auto" : "smooth" });
   }
 
+  // ---------- captions (videos): the current line of the transcript, tappable ----------
+  const capEl = vid ? $("#captions") : null;
+  const segFirst = new Map();
+  for (let i = 0; i < n; i++) if (!segFirst.has(segOf[i])) segFirst.set(segOf[i], i);
+  let capStart = -1;
+  let capEls = [];
+  let bubble = null;
+  function showCaption(idx) {
+    if (!capEl || (bubble && bubble.open)) return; // keep the tapped word in place while its bubble is open
+    let start = -1;
+    let end = -1;
+    if (idx >= 0) {
+      const first = segFirst.get(segOf[idx]);
+      start = first + Math.floor((idx - first) / CAPTION_WORDS) * CAPTION_WORDS;
+      end = start;
+      while (end + 1 < n && end + 1 < start + CAPTION_WORDS && segOf[end + 1] === segOf[idx]) end++;
+    }
+    if (start === capStart) return;
+    capStart = start;
+    capEl.innerHTML = start < 0 ? ""
+      : Array.from({ length: end - start + 1 }, (_, k) => `<span class="w" data-i="${start + k}">${esc(texts[start + k])}</span>`).join(" ");
+    capEls = [...capEl.querySelectorAll(".w")];
+  }
+  const capWord = (i) => (capStart >= 0 ? capEls[i - capStart] : null);
+
   function setActive(idx) {
     if (idx === curIdx) return;
-    if (curIdx >= 0) wordEls[curIdx].classList.remove("cur");
+    if (curIdx >= 0) {
+      wordEls[curIdx].classList.remove("cur");
+      capWord(curIdx)?.classList.remove("cur");
+    }
     curIdx = idx;
+    showCaption(idx);
     if (idx >= 0) {
       wordEls[idx].classList.add("cur");
+      capWord(idx)?.classList.add("cur");
       if (follow) ensureVisible(wordEls[idx]);
     }
   }
@@ -449,7 +501,7 @@ export async function render(view, { id, query }) {
     };
   }
 
-  const bubble = createWordBubble($(".transcript-wrap"), {
+  bubble = createWordBubble(vid ? $("#stage") : $(".transcript-wrap"), {
     fetch: (ctx, refresh) => getDefinition(ctx, refresh),
     onPlayWord: () => bubbleTarget && playClip(starts[bubbleTarget.i], ends[bubbleTarget.j]),
     onPlaySentence: () => bubbleTarget && playClip(starts[bubbleTarget.si], ends[bubbleTarget.sj]),
@@ -474,18 +526,71 @@ export async function render(view, { id, query }) {
     },
   });
 
-  function defineAt(i, j = i) {
+  function defineAt(i, j = i, anchor = null) {
     const c = contextFor(i, j);
     bubbleTarget = { i, j, si: c.si, sj: c.sj, text: c.word };
     playClip(starts[i], ends[j]);
-    bubble.show(wordEls[i], c.ctx);
+    bubble.show(anchor || wordEls[i], c.ctx);
+  }
+
+  // ---------- video: captions, transcript panel, full screen ----------
+  const playerEl = view.querySelector(".player");
+  if (vid) {
+    capEl.addEventListener("click", (e) => {
+      const wEl = e.target.closest(".w");
+      if (!wEl) return;
+      e.stopPropagation();
+      defineAt(Number(wEl.dataset.i), Number(wEl.dataset.i), wEl);
+    });
+    capEl.addEventListener("contextmenu", (e) => {
+      const wEl = e.target.closest(".w");
+      if (!wEl) return;
+      e.preventDefault();
+      openMenu(e.clientX, e.clientY, wEl);
+    });
+    // Tapping the picture plays/pauses (and closes an open definition).
+    $("#screen").addEventListener("click", (e) => {
+      if (e.target.closest(".captions")) return;
+      if (bubble.open) { bubble.hide(); return; }
+      clipEnd = null;
+      audio.paused ? play() : audio.pause();
+    });
+  }
+  function setPanel(open) {
+    if (!vid) return;
+    playerEl.classList.toggle("panel-open", open);
+    $("#toggle-panel").classList.toggle("primary", open);
+    lsSet("videoPanel", open);
+    if (open && curIdx >= 0) setTimeout(() => ensureVisible(wordEls[curIdx], true), 300);
+    setTimeout(() => bubble.position(), 300);
+  }
+  function setCaptions(on) {
+    if (!vid) return;
+    playerEl.classList.toggle("cc-off", !on);
+    $("#toggle-cc").classList.toggle("ghost", !on);
+    lsSet("videoCaptions", on);
+  }
+  function toggleFullscreen() {
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    else playerEl.requestFullscreen?.().catch((e) => toast(`Full screen isn't available here (${e.message}).`));
+  }
+  if (vid) {
+    setPanel(lsGet("videoPanel", window.innerWidth > 760));
+    setCaptions(lsGet("videoCaptions", true));
+    $("#toggle-panel").onclick = () => setPanel(!playerEl.classList.contains("panel-open"));
+    $("#toggle-cc").onclick = () => setCaptions(playerEl.classList.contains("cc-off"));
+    if (document.fullscreenEnabled) $("#fullscreen").onclick = toggleFullscreen;
+    else $("#fullscreen").hidden = true;
   }
 
   tr.addEventListener("scroll", () => bubble.position(), { passive: true });
+  const onFullscreen = () => setTimeout(() => bubble.position(), 100);
+  document.addEventListener("fullscreenchange", onFullscreen);
   const onResize = () => bubble.position();
   window.addEventListener("resize", onResize);
   const onOutside = (e) => {
-    if (bubble.open && !e.target.closest(".word-bubble") && !e.target.closest(".w") && !e.target.closest("#ctxmenu")) bubble.hide();
+    if (bubble.open && !e.target.closest(".word-bubble") && !e.target.closest(".w") && !e.target.closest("#ctxmenu")
+        && !e.target.closest("#screen")) bubble.hide();
   };
   document.addEventListener("pointerdown", onOutside);
 
@@ -515,6 +620,9 @@ export async function render(view, { id, query }) {
     else if (e.key === "ArrowLeft") { e.preventDefault(); seekTo(audio.currentTime - 5, false); }
     else if (e.key === "ArrowRight") { e.preventDefault(); seekTo(audio.currentTime + 5, false); }
     else if (e.key === "Escape") { if (bubble.open) bubble.hide(); else clearLoop(); }
+    else if (vid && (e.key === "t" || e.key === "T")) setPanel(!playerEl.classList.contains("panel-open"));
+    else if (vid && (e.key === "c" || e.key === "C")) setCaptions(playerEl.classList.contains("cc-off"));
+    else if (vid && (e.key === "f" || e.key === "F") && document.fullscreenEnabled) toggleFullscreen();
   };
   document.addEventListener("keydown", onKey);
 
@@ -542,6 +650,8 @@ export async function render(view, { id, query }) {
 
   return () => {
     disposed = true;
+    if (document.fullscreenElement) document.exitFullscreen().catch(() => {});
+    document.removeEventListener("fullscreenchange", onFullscreen);
     clearTimeout(clipTimer);
     bubble.hide();
     window.removeEventListener("resize", onResize);

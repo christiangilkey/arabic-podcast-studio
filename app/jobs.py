@@ -15,7 +15,7 @@ from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
-from . import arabic, audio, db, downloader, events, paths, sync, transcriber
+from . import arabic, audio, db, downloader, events, paths, sync, transcriber, videos
 from .transcriber import Segment, TranscriptionCancelled
 
 log = logging.getLogger(__name__)
@@ -106,8 +106,8 @@ def enqueue(episode_ids: Iterable[int]) -> list[int]:
     now = time.time()
     with db.session() as conn:
         for ep in episode_ids:
-            row = conn.execute("SELECT status FROM episodes WHERE id = ?", (ep,)).fetchone()
-            if row is None or row["status"] in ACTIVE_STATUSES:
+            row = conn.execute("SELECT status, deleted FROM episodes WHERE id = ?", (ep,)).fetchone()
+            if row is None or row["deleted"] or row["status"] in ACTIVE_STATUSES:
                 continue
             conn.execute("INSERT INTO jobs(episode_id, state, created_at) VALUES(?, 'queued', ?)", (ep, now))
             _set_episode(conn, ep, status="queued", progress=0, error=None)
@@ -179,7 +179,18 @@ def _ensure_audio(ep: dict[str, Any], cancel: threading.Event) -> tuple[Path, bo
     ext = downloader.guess_extension(ep["audio_url"], ep["audio_type"])
     stream_only = bool(db.get_setting("stream_from_source"))
     dest = paths.audio_dir() / (f"{ep_id}.tmp{ext}" if stream_only else f"{ep_id}{ext}")
-    downloader.download(ep["audio_url"], dest, prog, cancel=cancel)
+    if videos.is_drive_media(ep["audio_url"]):
+        # A video uploaded from another device: it lives in the user's Google Drive.
+        if not ep["remote_audio"]:
+            raise downloader.DownloadError("The video is still uploading from the other device. Try again shortly.")
+        try:
+            sync.fetch_media(videos.drive_name(ep["audio_url"]), dest, prog)
+        except FileNotFoundError as exc:
+            raise downloader.DownloadError("The video isn't in your Google Drive any more.") from exc
+        except sync.DriveError as exc:
+            raise downloader.DownloadError(str(exc)) from exc
+    else:
+        downloader.download(ep["audio_url"], dest, prog, cancel=cancel)
     if not stream_only:
         with db.session() as conn:
             _set_episode(conn, ep_id, audio_path=str(dest))
@@ -217,6 +228,10 @@ def _make_sync_copy(ep_id: int, source: Path) -> None:
     """Compressed copy of the exact audio just transcribed, for other devices (only when syncing)."""
     if not (sync.oauth.signed_in() and db.get_setting("sync_audio")):
         return
+    with db.session() as conn:
+        row = conn.execute("SELECT audio_url FROM episodes WHERE id = ?", (ep_id,)).fetchone()
+    if row and videos.is_drive_media(row["audio_url"]):
+        return  # the video itself is in Drive; other devices play that
     dest = paths.audio_dir() / f"{ep_id}.sync.ogg"
     try:
         audio.encode_speech_copy(source, dest)
@@ -270,7 +285,7 @@ def _process(job: dict[str, Any], cancel: threading.Event) -> None:
         _make_sync_copy(ep_id, audio_path)
         with db.session() as conn:
             conn.execute("UPDATE jobs SET state = 'done', finished_at = ? WHERE id = ?", (time.time(), job["id"]))
-        if db.get_setting("delete_audio_after") and not is_temp:
+        if db.get_setting("delete_audio_after") and not is_temp and not videos.is_drive_media(ep["audio_url"]):
             audio_path.unlink(missing_ok=True)
             with db.session() as conn:
                 _set_episode(conn, ep_id, audio_path=None)

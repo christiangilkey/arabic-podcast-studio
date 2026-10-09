@@ -282,7 +282,7 @@ def refresh_feed(feed_id: int) -> list[int]:
 
     with db.session() as conn:
         feed = conn.execute("SELECT * FROM feeds WHERE id = ? AND deleted = 0", (feed_id,)).fetchone()
-    if feed is None:
+    if feed is None or feed["url"].startswith("local:"):  # "My videos" has no RSS
         return []
     try:
         content, final_url, etag, modified = fetch(feed["url"], feed["etag"], feed["modified"])
@@ -308,7 +308,8 @@ def refresh_feed(feed_id: int) -> list[int]:
 
 def refresh_all() -> int:
     with db.session() as conn:
-        feed_ids = [r["id"] for r in conn.execute("SELECT id FROM feeds WHERE deleted = 0").fetchall()]
+        feed_ids = [r["id"] for r in conn.execute(
+            "SELECT id FROM feeds WHERE deleted = 0 AND url NOT LIKE 'local:%'").fetchall()]
     total = 0
     for feed_id in feed_ids:
         total += len(refresh_feed(feed_id))

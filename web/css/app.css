@@ -452,3 +452,53 @@ mark { background: var(--hl); color: var(--hl-ink); border-radius: 3px; padding:
   .player-head { padding-top: 4px; padding-bottom: 4px; }
   .player-head img { display: none; }
 }
+
+/* ---------- video player ("My videos") ---------- */
+.player.video .stage { flex: 1; min-height: 0; display: flex; position: relative; background: #000; }
+.player.video .screen { flex: 1; min-width: 0; min-height: 0; position: relative; display: flex; align-items: center; justify-content: center; background: #000; transition: flex-basis .25s ease; }
+.player.video video { width: 100%; height: 100%; object-fit: contain; display: block; cursor: pointer; }
+.player.video .transcript-wrap { flex: none; width: 0; overflow: hidden; background: var(--bg); transition: width .25s ease; }
+.player.video.panel-open .transcript-wrap { width: min(44%, 520px); border-left: 1px solid var(--border); }
+.player.video .transcript { padding: 16px 20px 40vh; }
+.player.video .transcript .seg::before { display: none; }
+.player.video:fullscreen { background: #000; }
+.captions {
+  position: absolute; left: 50%; bottom: 5%; transform: translateX(-50%);
+  max-width: 92%; width: max-content; text-align: center;
+  font-family: var(--ar-font); font-size: clamp(18px, calc(var(--ar-size) * .95), 44px); line-height: 1.75;
+  color: #fff; background: rgba(0, 0, 0, .66); padding: .1em .6em; border-radius: 10px;
+  direction: rtl; z-index: 2; user-select: none; -webkit-user-select: none;
+}
+.captions:empty, .player.cc-off .captions { display: none; }
+.captions .w { cursor: pointer; border-radius: 5px; padding: 0 .05em; transition: background-color .08s; }
+.captions .w:hover { background: rgba(255, 255, 255, .2); }
+.captions .w.cur { background: var(--hl); color: var(--hl-ink); }
+.pending-video { width: 100%; max-height: 50vh; border-radius: 10px; background: #000; margin-bottom: 8px; }
+@media (max-width: 760px) {
+  /* Phone: video on top, transcript panel rises from the bottom. */
+  .player.video .stage { flex-direction: column; }
+  .player.video .screen { flex: 1 1 auto; }
+  .player.video .transcript-wrap { width: auto; height: 0; transition: height .25s ease; }
+  .player.video.panel-open .transcript-wrap { width: auto; height: 58%; border-left: none; border-top: 1px solid var(--border); }
+  .player.video .transcript { padding: 12px 14px 30vh; }
+  .captions { bottom: 4%; font-size: clamp(16px, calc(var(--ar-size) * .8), 30px); }
+}
+
+/* ---------- library: own videos ---------- */
+.upload-status { margin: 6px 0 10px; }
+.upload-status .small { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lib-head .video-ph { width: 88px; height: 88px; border-radius: 10px; display: grid; place-items: center; font-size: 40px; background: var(--surface-2); flex: none; }
+
+/* ---------- vocab: folders, filters, bulk actions ---------- */
+.folder-bar { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; margin-bottom: 10px; }
+.folder-chip { border-radius: 99px; min-height: 30px; padding: 3px 12px; font-size: 13px; }
+.folder-chip.active { background: var(--accent); border-color: var(--accent); color: var(--accent-ink, #fff); }
+.folder-chip .n { opacity: .7; font-size: 12px; }
+.small-btn { min-height: 28px; padding: 2px 10px; font-size: 12px; }
+.vocab-filters { gap: 10px; margin-bottom: 12px; flex-wrap: wrap; }
+.vocab-filters label { display: inline-flex; align-items: center; gap: 6px; }
+.bulk-bar { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding: 8px 12px; margin-bottom: 12px; border-radius: 10px; background: var(--sel-range); position: sticky; top: 0; z-index: 4; }
+.item-folders { display: flex; flex-wrap: wrap; gap: 4px; margin-top: 6px; }
+.item-folders:empty { display: none; }
+.tag { font-size: 12px; padding: 1px 8px; border-radius: 99px; background: var(--surface-2); color: var(--muted); }
+.vocab-item .pick { margin-top: 10px; }

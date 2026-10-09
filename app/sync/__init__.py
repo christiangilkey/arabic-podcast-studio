@@ -131,6 +131,62 @@ def status() -> dict[str, Any]:
     }
 
 
+_media_ids: dict[str, str] = {}  # Drive file name -> id, so seeking doesn't re-list the folder
+
+
+def _media_id(drive: GoogleDrive, name: str) -> str:
+    if name not in _media_ids:
+        for f in drive.list():
+            _media_ids[f["name"]] = f["id"]
+    if name not in _media_ids:
+        raise FileNotFoundError(name)
+    return _media_ids[name]
+
+
+class _Stream:
+    """A Drive download response that also closes its client when done."""
+
+    def __init__(self, drive: GoogleDrive, resp: Any) -> None:
+        self._drive, self._resp = drive, resp
+        self.status_code, self.headers = resp.status_code, resp.headers
+
+    def iter_bytes(self, size: int) -> Any:
+        return self._resp.iter_bytes(size)
+
+    def close(self) -> None:
+        self._resp.close()
+        self._drive.close()
+
+
+def open_media(name: str, range_header: str | None) -> _Stream:
+    """Stream (part of) a video stored in Drive, for the player."""
+    if not oauth.signed_in():
+        raise DriveError("Sign in with Google (Settings) to watch videos stored in Drive.")
+    drive = GoogleDrive(lambda force: oauth.access_token(force))
+    try:
+        try:
+            resp = drive.stream(_media_id(drive, name), range_header)
+        except DriveError:
+            _media_ids.pop(name, None)  # stale id (file replaced): look it up again once
+            resp = drive.stream(_media_id(drive, name), range_header)
+        return _Stream(drive, resp)
+    except Exception:
+        drive.close()
+        raise
+
+
+def fetch_media(name: str, dest: Path, progress: Any = None) -> Path:
+    """Download a video stored in Drive (to transcribe one added on another device)."""
+    if not oauth.signed_in():
+        raise DriveError("This video is stored in Google Drive: sign in with Google in Settings to transcribe it.")
+    drive = GoogleDrive(lambda force: oauth.access_token(force))
+    try:
+        drive.download_to(_media_id(drive, name), dest, progress)
+    finally:
+        drive.close()
+    return dest
+
+
 def audio_copy(episode_id: int) -> Path | None:
     """Fetch the synced audio copy for an episode (used by the player)."""
     if not oauth.signed_in():

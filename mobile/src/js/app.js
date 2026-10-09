@@ -7,11 +7,12 @@ import * as vocab from "./pages/vocab.js";
 import * as search from "./pages/search.js";
 import * as settingsPage from "./pages/settings.js";
 import * as welcome from "./pages/welcome.js";
-import { handle } from "./backend.js";
-import { App, Filesystem, Share, isNative } from "./native.js";
+import { addUploadedVideo, handle } from "./backend.js";
+import { accessToken, drive } from "./drive.js";
+import { App, Filesystem, GoogleDriveAuth, Share, isNative } from "./native.js";
 import { kv, lib, loadLibrary, loadSettings, saveSettingsPatch, settings } from "./store.js";
-import { audioCopy, onSync, syncNow } from "./sync.js";
-import { toSrt, toTxt, toVtt, vocabAnki, vocabCsv } from "./shared-logic.js";
+import { audioCopy, driveFileId, onSync, syncNow } from "./sync.js";
+import { newUid, toSrt, toTxt, toVtt, vocabAnki, vocabCsv } from "./shared-logic.js";
 
 export const platform = "android";
 
@@ -73,6 +74,7 @@ const objectUrls = new Map();
 /** Synced audio copy (exactly what was transcribed), downloaded on first play; else the original. */
 export async function audioUrl(uid) {
   const ep = lib.episodes.find((e) => e.uid === uid);
+  if (ep && (ep.audio_url || "").startsWith("drive:")) return videoUrl(ep);
   if (ep && ep.remote_audio && settings.signed_in) {
     if (objectUrls.has(uid)) return objectUrls.get(uid);
     try {
@@ -90,6 +92,58 @@ export async function audioUrl(uid) {
   return ep ? ep.audio_url : "";
 }
 
+// ---------- own videos ----------
+// Videos stream from the user's Drive through DriveMediaWebViewClient.java, which adds the
+// sign-in token that a <video> element can't send itself.
+async function refreshMediaToken() {
+  if (!isNative || !settings.signed_in) return;
+  try { await GoogleDriveAuth.setMediaToken({ token: await accessToken() }); } catch (e) { console.warn(e); }
+}
+
+async function videoUrl(ep) {
+  if (!settings.signed_in) throw new Error("Sign in with Google (Settings) to watch videos stored in your Drive.");
+  if (!ep.remote_audio) throw new Error("This video is still uploading from your computer.");
+  if (!isNative) throw new Error("Videos play in the installed Android app.");
+  await refreshMediaToken();
+  const id = await driveFileId(ep.audio_url.slice("drive:".length));
+  if (!id) throw new Error("The video isn't in your Google Drive any more.");
+  return `${location.origin}/_drive/${id}`;
+}
+
+const VIDEO_EXT = /\.(mp4|m4v|mov|webm|mkv|avi|3gp)$/i;
+
+function videoDuration(file) {
+  return new Promise((resolve) => {
+    const v = document.createElement("video");
+    const url = URL.createObjectURL(file);
+    const done = (d) => { URL.revokeObjectURL(url); resolve(Number.isFinite(d) ? d : null); };
+    v.preload = "metadata";
+    v.onloadedmetadata = () => done(v.duration);
+    v.onerror = () => done(null);
+    setTimeout(() => done(null), 8000);
+    v.src = url;
+  });
+}
+
+/** Upload a video to Drive; the computer transcribes it on its next sync. */
+export async function uploadVideo(file, onProgress) {
+  if (!settings.signed_in) throw new Error("Sign in with Google (Settings) first: videos are stored in your Drive.");
+  const ext = (file.name.match(VIDEO_EXT) || [])[1];
+  if (!ext && !(file.type || "").startsWith("video/")) throw new Error("Choose a video file (MP4, MOV, WebM, MKV, AVI or 3GP).");
+  const suffix = `.${(ext || "mp4").toLowerCase()}`;
+  const mime = file.type || "video/mp4";
+  const uid = `e${newUid().slice(1)}`;
+  const driveName = `v_${uid}${suffix}`;
+  const duration = await videoDuration(file);
+  const meta = await drive.uploadLarge(driveName, file, mime, onProgress);
+  const files = (await kv.get("drive_files")) || {};
+  files[driveName] = meta;
+  await kv.set("drive_files", files);
+  const title = file.name.replace(/\.[^.]+$/, "") || "Video";
+  const ep = await addUploadedVideo({ uid, title, driveName, mime, duration });
+  return { ...ep, note: "Your computer transcribes it the next time it syncs." };
+}
+
 // ---------- exports (share sheet) ----------
 async function exportText(url) {
   let m;
@@ -98,8 +152,13 @@ async function exportText(url) {
     const segs = t.segments;
     return m[2] === "txt" ? toTxt(segs, t.episode.title) : m[2] === "srt" ? toSrt(segs) : toVtt(segs);
   }
-  if ((m = url.match(/\/api\/vocab\/export\/(csv|anki)$/))) {
-    const items = lib.vocab.filter((v) => !v.deleted).sort((a, b) => b.created_at - a.created_at);
+  if ((m = url.match(/\/api\/vocab\/export\/(csv|anki)(?:\?ids=([^&]*))?$/))) {
+    let items = lib.vocab.filter((v) => !v.deleted).sort((a, b) => b.created_at - a.created_at);
+    if (m[2] !== undefined) {
+      // Exactly the words shown on the vocab screen, in that order.
+      const order = decodeURIComponent(m[2]).split(",");
+      items = order.map((uid) => items.find((v) => v.uid === uid)).filter(Boolean);
+    }
     return m[1] === "csv" ? vocabCsv(items) : vocabAnki(items);
   }
   throw new Error("Unknown export.");
@@ -220,6 +279,8 @@ async function boot() {
   });
   syncNow();
   setInterval(() => syncNow(), 5 * 60 * 1000);
+  // Sign-in tokens last an hour: keep the video streamer's copy fresh during long videos.
+  setInterval(refreshMediaToken, 40 * 60 * 1000);
   if (App) {
     App.addListener("resume", () => syncNow());
     App.addListener("backButton", () => {

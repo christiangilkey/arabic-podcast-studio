@@ -2,6 +2,7 @@
 //   library.json.gz       merged record by record (newest updated_at wins; tombstones kept)
 //   t_<episode>.json.gz   transcripts, downloaded for offline reading and search
 //   a_<episode>.ogg       audio copies, fetched when an episode is first played
+//   v_<episode>.<ext>     the user's own videos, streamed from Drive (DriveMediaWebViewClient.java)
 // The phone never transcribes; it can ask the desktop to (episode.transcribe_requested_at).
 
 import { drive, gunzipJson, gzipJson } from "./drive.js";
@@ -50,6 +51,13 @@ export function merge(remote) {
   }
   lib.vocab = [...vocab.values()];
 
+  const folders = new Map((lib.folders || []).map((f) => [f.uid, f]));
+  for (const r of remote.folders || []) {
+    const l = folders.get(r.uid);
+    if (!l || newer(r, l)) { folders.set(r.uid, r); changed++; }
+  }
+  lib.folders = [...folders.values()];
+
   const defs = new Map(lib.definitions.map((d) => [d.key, d]));
   for (const r of remote.definitions || []) if (!defs.has(r.key)) { defs.set(r.key, r); changed++; }
   lib.definitions = [...defs.values()];
@@ -65,6 +73,7 @@ export function snapshot() {
     feeds: [...lib.feeds].sort(byUid),
     episodes: lib.episodes.filter((e) => live.has(e.feed_uid)).sort(byUid),
     vocab: [...lib.vocab].sort(byUid),
+    folders: [...(lib.folders || [])].sort(byUid),
     definitions: [...lib.definitions].sort((a, b) => (a.key < b.key ? -1 : 1)),
   };
 }
@@ -76,7 +85,8 @@ function canonical(value) {
   }
   return JSON.stringify(value ?? null);
 }
-const content = (l) => canonical({ feeds: l.feeds, episodes: l.episodes, vocab: l.vocab, definitions: l.definitions });
+const content = (l) => canonical({ feeds: l.feeds, episodes: l.episodes, vocab: l.vocab, folders: l.folders || [],
+                                   definitions: l.definitions });
 
 // ---------- run ----------
 let running = null;
@@ -114,6 +124,7 @@ async function doSync() {
     }
     saveLibrary();
     await kv.set("drive_files", files);
+    await forgetDeleted();
     const downloaded = await prefetchTranscripts(files);
     publish({ state: "idle", last_sync: Date.now() / 1000, downloaded });
   } catch (e) {
@@ -122,9 +133,19 @@ async function doSync() {
   return syncState;
 }
 
+/** Free phone storage held by videos deleted on any device. */
+async function forgetDeleted() {
+  for (const ep of lib.episodes) {
+    if (!ep.deleted) continue;
+    await transcripts.delete(ep.uid).catch(() => {});
+    await audio.delete(ep.uid).catch(() => {});
+  }
+}
+
 async function prefetchTranscripts(files) {
   let n = 0;
   for (const ep of lib.episodes) {
+    if (ep.deleted) continue;
     const rev = ep.transcript_rev;
     const meta = files[`t_${ep.uid}.json.gz`];
     if (!rev || !meta) continue;
@@ -149,6 +170,16 @@ export async function fetchTranscript(uid) {
   const payload = await gunzipJson(await drive.download(meta.id));
   await transcripts.put(uid, payload);
   return payload;
+}
+
+/** Drive file id for a file in the app folder (cached; refreshed if missing). */
+export async function driveFileId(name) {
+  let files = (await kv.get("drive_files")) || {};
+  if (!files[name]) {
+    files = Object.fromEntries((await drive.list()).map((f) => [f.name, f]));
+    await kv.set("drive_files", files);
+  }
+  return files[name] ? files[name].id : null;
 }
 
 /** Local audio copy for an episode, downloading it from Drive the first time. */

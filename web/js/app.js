@@ -122,9 +122,26 @@ on("episode", (e) => {
 // ---------- platform hooks (the Android app's shell provides its own versions) ----------
 export const platform = "desktop";
 
-/** URL the <audio> element should play for an episode. */
+/** URL the <audio> (or <video>) element should play for an episode. */
 export async function audioUrl(episodeId) {
   return `/api/episodes/${episodeId}/audio`;
+}
+
+/** Add one of the user's own video files. Resolves to the new episode. */
+export function uploadVideo(file, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", `/api/videos?filename=${encodeURIComponent(file.name)}`);
+    xhr.upload.onprogress = (e) => { if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total); };
+    xhr.onload = () => {
+      let data = null;
+      try { data = JSON.parse(xhr.responseText); } catch { /* not JSON */ }
+      if (xhr.status < 300) resolve(data);
+      else reject(new Error((data && data.detail) || `Upload failed (${xhr.status}).`));
+    };
+    xhr.onerror = () => reject(new Error("Upload failed: the app's server didn't respond."));
+    xhr.send(file);
+  });
 }
 
 // ---------- downloads ----------

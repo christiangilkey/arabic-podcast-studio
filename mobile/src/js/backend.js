@@ -2,7 +2,7 @@
 // shared screens make (library, player, vocab, search) from on-phone storage.
 // Ids are the global uids, so links work the same everywhere.
 
-import { lib, now, saveLibrary, transcripts } from "./store.js";
+import { audio, lib, now, saveLibrary, transcripts } from "./store.js";
 import { fetchTranscript, requestSync, syncNow, syncState } from "./sync.js";
 import { feedUid, findSpans, newUid, normalize, normalizeUrl } from "./shared-logic.js";
 import { settings } from "./store.js";
@@ -11,7 +11,30 @@ export class ApiError extends Error {}
 
 const changed = () => { saveLibrary(); requestSync(); };
 const feedOf = (uid) => lib.feeds.find((f) => f.uid === uid);
-const episodeOf = (uid) => lib.episodes.find((e) => e.uid === uid);
+const episodeOf = (uid) => lib.episodes.find((e) => e.uid === uid && !e.deleted);
+const liveEpisodes = () => lib.episodes.filter((e) => !e.deleted);
+
+export const LOCAL_FEED_URL = "local:videos";
+
+/** Record a video this phone just uploaded to Drive; the computer transcribes it on its next sync. */
+export async function addUploadedVideo({ uid, title, driveName, mime, duration }) {
+  const fuid = await feedUid(LOCAL_FEED_URL);
+  const t = now();
+  let feed = feedOf(fuid);
+  if (!feed) {
+    feed = { uid: fuid, url: LOCAL_FEED_URL, title: "My videos", description: "Video files you added yourself. They're stored in your Google Drive.",
+             image: null, link: null, auto_transcribe: 0, deleted: 0, created_at: t, updated_at: t };
+    lib.feeds.push(feed);
+  } else if (feed.deleted) {
+    Object.assign(feed, { deleted: 0, updated_at: t });
+  }
+  const ep = { uid, feed_uid: fuid, guid: uid, title, description: "", published: t, duration: duration || null, image: null,
+               audio_url: `drive:${driveName}`, audio_type: mime, transcript_rev: null, model: null,
+               transcribe_requested_at: t, remote_audio: 1, deleted: 0, created_at: t, updated_at: t };
+  lib.episodes.push(ep);
+  changed();
+  return episodeOut(ep);
+}
 
 export function episodeStatus(e) {
   if (e.transcript_rev) return "done";
@@ -20,7 +43,7 @@ export function episodeStatus(e) {
 }
 
 function feedOut(f) {
-  const eps = lib.episodes.filter((e) => e.feed_uid === f.uid);
+  const eps = liveEpisodes().filter((e) => e.feed_uid === f.uid);
   return { ...f, id: f.uid, episode_count: eps.length, done_count: eps.filter((e) => e.transcript_rev).length,
            latest: Math.max(0, ...eps.map((e) => e.published || 0)) || null, last_checked: null, last_error: null };
 }
@@ -28,12 +51,15 @@ function feedOut(f) {
 function episodeOut(e) {
   const f = feedOf(e.feed_uid) || {};
   return { ...e, id: e.uid, feed_id: e.feed_uid, status: episodeStatus(e), progress: e.transcript_rev ? 100 : 0,
-           error: null, feed_title: f.title || "", feed_image: f.image || null, has_audio: !!e.remote_audio };
+           error: null, feed_title: f.title || "", feed_image: f.image || null, feed_url: f.url || "",
+           has_audio: !!e.remote_audio };
 }
 
 function vocabOut(v) {
-  return { ...v, id: v.uid, episode_id: v.episode_uid };
+  return { ...v, id: v.uid, episode_id: v.episode_uid, folders: v.folders || [] };
 }
+const folderOut = (f) => ({ uid: f.uid, name: f.name, created_at: f.created_at, updated_at: f.updated_at });
+const liveFolders = () => (lib.folders || []).filter((f) => !f.deleted).sort((a, b) => a.name.localeCompare(b.name));
 
 async function loadTranscript(uid) {
   let t = await transcripts.get(uid);
@@ -72,6 +98,7 @@ const routes = [
   }],
   ["DELETE", /^\/feeds\/([\w]+)$/, async (m) => {
     const f = feedOf(m[1]);
+    if (f && f.url === LOCAL_FEED_URL) throw new ApiError("Delete videos one by one; “My videos” itself can't be removed.");
     if (f) {
       f.deleted = 1;
       f.updated_at = now();
@@ -86,12 +113,12 @@ const routes = [
     const before = lib.episodes.length;
     await syncNow();
     if (syncState.state === "error") throw new ApiError(syncState.error);
-    return { ok: true, new_episodes: Math.max(0, lib.episodes.length - before) };
+    return { ok: true, new_episodes: Math.max(0, lib.episodes.length - before), synced: true };
   }],
 
   // ----- episodes -----
   ["GET", /^\/episodes$/, (m, q) => {
-    let eps = lib.episodes.filter((e) => feedOf(e.feed_uid) && !feedOf(e.feed_uid).deleted);
+    let eps = liveEpisodes().filter((e) => feedOf(e.feed_uid) && !feedOf(e.feed_uid).deleted);
     if (q.get("feed_id")) eps = eps.filter((e) => e.feed_uid === q.get("feed_id"));
     const counts = {};
     for (const e of eps) counts[episodeStatus(e)] = (counts[episodeStatus(e)] || 0) + 1;
@@ -132,6 +159,18 @@ const routes = [
     if (e.transcript_rev && !t) ep.status = "new";
     return { episode: ep, segments, words };
   }],
+  ["DELETE", /^\/episodes\/([\w]+)$/, async (m) => {
+    const e = episodeOf(m[1]);
+    if (!e) return { ok: true };
+    const f = feedOf(e.feed_uid);
+    if (!f || f.url !== LOCAL_FEED_URL) throw new ApiError("Podcast episodes can't be deleted; remove the podcast instead.");
+    // A tombstone: every device removes it, and the computer frees the Drive space.
+    Object.assign(e, { deleted: 1, transcribe_requested_at: null, updated_at: now() });
+    await transcripts.delete(e.uid).catch(() => {});
+    await audio.delete(e.uid).catch(() => {});
+    changed();
+    return { ok: true };
+  }],
   ["GET", /^\/episodes\/([\w]+)$/, (m) => {
     const e = episodeOf(m[1]);
     if (!e) throw new ApiError("Episode not found.");
@@ -144,7 +183,7 @@ const routes = [
     const norm = normalize(query);
     const results = [];
     if (!norm) return { query, results, total: 0 };
-    for (const e of lib.episodes) {
+    for (const e of liveEpisodes()) {
       if (!e.transcript_rev) continue;
       const t = await transcripts.get(e.uid);
       if (!t) continue;
@@ -163,6 +202,9 @@ const routes = [
   // ----- vocab -----
   ["GET", /^\/vocab$/, (m, q) => {
     let items = lib.vocab.filter((v) => !v.deleted).sort((a, b) => b.created_at - a.created_at);
+    const folder = q.get("folder");
+    if (folder === "none") items = items.filter((v) => !(v.folders || []).length);
+    else if (folder) items = items.filter((v) => (v.folders || []).includes(folder));
     const query = q.get("q");
     if (query) {
       const nq = normalize(query);
@@ -180,14 +222,58 @@ const routes = [
     const v = { uid: newUid(), episode_uid: e ? e.uid : null, text, sentence: (body.sentence || "").trim(),
                 start: body.start ?? null, end: body.end ?? null, sent_start: body.sent_start ?? null,
                 sent_end: body.sent_end ?? null, meaning: body.meaning || "", notes: body.notes || "",
-                episode_title: e ? e.title : "", deleted: 0, created_at: t, updated_at: t };
+                episode_title: e ? e.title : "", folders: [], deleted: 0, created_at: t, updated_at: t };
     lib.vocab.push(v);
     changed();
     return vocabOut(v);
   }],
+  // ----- vocab folders (a word can be in several) -----
+  ["GET", /^\/vocab\/folders$/, () => liveFolders().map(folderOut)],
+  ["POST", /^\/vocab\/folders$/, (m, q, body) => {
+    const name = (body.name || "").trim().slice(0, 80);
+    if (!name) throw new ApiError("Give the folder a name.");
+    const t = now();
+    const f = { uid: `d${newUid().slice(1)}`, name, deleted: 0, created_at: t, updated_at: t };
+    (lib.folders = lib.folders || []).push(f);
+    changed();
+    return folderOut(f);
+  }],
+  ["PATCH", /^\/vocab\/folders\/([\w]+)$/, (m, q, body) => {
+    const f = (lib.folders || []).find((x) => x.uid === m[1]);
+    const name = (body.name || "").trim().slice(0, 80);
+    if (!f) throw new ApiError("Folder not found.");
+    if (!name) throw new ApiError("Give the folder a name.");
+    Object.assign(f, { name, updated_at: now() });
+    changed();
+    return folderOut(f);
+  }],
+  ["DELETE", /^\/vocab\/folders\/([\w]+)$/, (m) => {
+    const f = (lib.folders || []).find((x) => x.uid === m[1]);
+    if (f) {
+      Object.assign(f, { deleted: 1, updated_at: now() });
+      for (const v of lib.vocab) {
+        if ((v.folders || []).includes(f.uid)) { v.folders = v.folders.filter((x) => x !== f.uid); v.updated_at = now(); }
+      }
+      changed();
+    }
+    return { ok: true };
+  }],
+  ["POST", /^\/vocab\/bulk-folders$/, (m, q, body) => {
+    let n = 0;
+    for (const id of body.ids || []) {
+      const v = lib.vocab.find((x) => x.uid === id);
+      if (!v) continue;
+      const before = v.folders || [];
+      const after = [...new Set([...before, ...(body.add || [])])].filter((x) => !(body.remove || []).includes(x)).sort();
+      if (after.join() !== [...before].sort().join()) { v.folders = after; v.updated_at = now(); n++; }
+    }
+    if (n) changed();
+    return { changed: n };
+  }],
   ["PATCH", /^\/vocab\/([\w]+)$/, (m, q, body) => {
     const v = lib.vocab.find((x) => x.uid === m[1]);
     if (!v) throw new ApiError("Not found.");
+    if (Array.isArray(body.folders)) v.folders = [...new Set(body.folders)].sort();
     for (const k of ["meaning", "notes", "text"]) if (body[k] !== undefined && body[k] !== null) v[k] = body[k];
     v.updated_at = now();
     changed();

@@ -92,6 +92,27 @@ export const drive = {
     return (await request(url, { method: id ? "PATCH" : "POST", body,
       headers: { "Content-Type": `multipart/related; boundary=${boundary}` } })).json();
   },
+  /** Upload a big file (a video) with progress. Uses XHR because fetch can't report upload progress. */
+  async uploadLarge(name, file, mime, onProgress) {
+    const start = await request(`${UPLOAD}/files?uploadType=resumable&fields=${FIELDS}`, {
+      method: "POST",
+      body: JSON.stringify({ name, parents: ["appDataFolder"] }),
+      headers: { "Content-Type": "application/json; charset=UTF-8", "X-Upload-Content-Type": mime,
+                 "X-Upload-Content-Length": String(file.size) },
+    });
+    const session = start.headers.get("Location");
+    if (!session) throw new Error("Google Drive didn't start the upload.");
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest();
+      xhr.open("PUT", session);
+      xhr.setRequestHeader("Content-Type", mime);
+      xhr.upload.onprogress = (e) => { if (e.lengthComputable && onProgress) onProgress(e.loaded / e.total); };
+      xhr.onload = () => (xhr.status < 300 ? resolve(JSON.parse(xhr.responseText))
+        : reject(new Error(`Google Drive upload failed (${xhr.status}).`)));
+      xhr.onerror = () => reject(new Error("Upload interrupted. Check your connection and try again."));
+      xhr.send(file);
+    });
+  },
 };
 
 // ---------- gzip (the format the desktop writes) ----------

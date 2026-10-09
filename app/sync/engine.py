@@ -1,9 +1,10 @@
 """Sync engine: merge the local library with the copy in the user's Google Drive.
 
 Drive layout (hidden app folder, shared by desktop and Android):
-    library.json.gz      feeds, episodes, vocab, definitions (small; merged record by record)
+    library.json.gz      feeds, episodes, vocab, vocab folders, definitions (merged record by record)
     t_<episode>.json.gz  one transcript per episode (written once per transcription)
     a_<episode>.ogg      compressed copy of the exact audio that was transcribed
+    v_<episode>.<ext>    the user's own video files ("My videos"; see app/videos.py)
 
 Merge rule: per record, the newest `updated_at` wins. Deletions are kept as tombstones so
 they propagate instead of being resurrected by another device.
@@ -18,7 +19,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from .. import arabic, audio, db, paths
+from .. import arabic, audio, db, paths, videos
 from .drive import Drive
 
 log = logging.getLogger(__name__)
@@ -40,7 +41,9 @@ class Result:
     uploaded_transcripts: int = 0
     downloaded_transcripts: int = 0
     uploaded_audio: int = 0
-    merged: dict[str, int] = field(default_factory=lambda: {"feeds": 0, "episodes": 0, "vocab": 0, "definitions": 0})
+    uploaded_videos: int = 0
+    merged: dict[str, int] = field(default_factory=lambda: {"feeds": 0, "episodes": 0, "vocab": 0, "folders": 0,
+                                                             "definitions": 0})
     library_uploaded: bool = False
     requested_transcriptions: list[int] = field(default_factory=list)
     new_feeds: list[int] = field(default_factory=list)  # added on another device; need an RSS fetch here
@@ -48,7 +51,8 @@ class Result:
     def summary(self) -> dict[str, Any]:
         return {"uploaded_transcripts": self.uploaded_transcripts,
                 "downloaded_transcripts": self.downloaded_transcripts,
-                "uploaded_audio": self.uploaded_audio, "merged": self.merged,
+                "uploaded_audio": self.uploaded_audio, "uploaded_videos": self.uploaded_videos,
+                "merged": self.merged,
                 "library_uploaded": self.library_uploaded,
                 "requested_transcriptions": len(self.requested_transcriptions)}
 
@@ -71,20 +75,30 @@ def snapshot(device_id: str) -> dict[str, Any]:
         episodes = [dict(r) for r in conn.execute(
             "SELECT e.uid, f.uid AS feed_uid, e.guid, e.title, substr(e.description, 1, 1500) AS description, "
             "e.published, e.duration, e.image, e.audio_url, e.audio_type, e.synced_rev AS transcript_rev, e.model, "
-            "e.transcribe_requested_at, e.remote_audio, e.created_at, e.updated_at "
+            "e.transcribe_requested_at, e.remote_audio, e.deleted, e.created_at, e.updated_at "
             "FROM episodes e JOIN feeds f ON f.id = e.feed_id WHERE f.deleted = 0 ORDER BY e.uid")]
-        vocab = [dict(r) for r in conn.execute(
+        vocab = [{**dict(r), "folders": _folder_list(r["folders"])} for r in conn.execute(
             "SELECT uid, episode_uid, text, sentence, start, end, sent_start, sent_end, meaning, notes, "
-            "episode_title, deleted, created_at, updated_at FROM vocab ORDER BY uid")]
+            "episode_title, folders, deleted, created_at, updated_at FROM vocab ORDER BY uid")]
+        folders = [dict(r) for r in conn.execute(
+            "SELECT uid, name, deleted, created_at, updated_at FROM vocab_folders ORDER BY uid")]
         defs = [{**dict(r), "data": json.loads(r["data"])} for r in conn.execute(
             "SELECT key, word, sentence, data, provider, model, created_at FROM definitions ORDER BY key")]
     return {"format": FORMAT_VERSION, "device": device_id, "feeds": feeds, "episodes": episodes,
-            "vocab": vocab, "definitions": defs}
+            "vocab": vocab, "folders": folders, "definitions": defs}
+
+
+def _folder_list(raw: Any) -> list[str]:
+    try:
+        value = json.loads(raw) if isinstance(raw, str) else raw
+    except json.JSONDecodeError:
+        return []
+    return sorted({str(x) for x in value}) if isinstance(value, list) else []
 
 
 def _content(lib: dict[str, Any]) -> str:
     """Canonical form used to decide whether an upload is needed (ignores who wrote it)."""
-    return json.dumps({k: lib.get(k) for k in ("feeds", "episodes", "vocab", "definitions")},
+    return json.dumps({k: lib.get(k) for k in ("feeds", "episodes", "vocab", "folders", "definitions")},
                       ensure_ascii=False, sort_keys=True)
 
 
@@ -108,7 +122,7 @@ def merge(remote: dict[str, Any], result: Result) -> list[tuple[int, str, float]
                     "updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
                     (r["uid"], r["url"], r["title"], r["description"] or "", r["image"], r["link"],
                      r["auto_transcribe"], r["deleted"], r["created_at"], r["updated_at"]))
-                if not r["deleted"]:
+                if not r["deleted"] and not videos.is_local_feed(r["url"]):
                     result.new_feeds.append(int(conn.execute("SELECT last_insert_rowid()").fetchone()[0]))
                 result.merged["feeds"] += 1
             elif _newer(r, local):
@@ -119,7 +133,7 @@ def merge(remote: dict[str, Any], result: Result) -> list[tuple[int, str, float]
                      r["updated_at"], local["id"]))
                 if r["deleted"] and not local["deleted"]:
                     _purge_feed_episodes(conn, local["id"])
-                elif local["deleted"] and not r["deleted"]:
+                elif local["deleted"] and not r["deleted"] and not videos.is_local_feed(r["url"]):
                     result.new_feeds.append(local["id"])  # re-subscribed elsewhere
                 result.merged["feeds"] += 1
 
@@ -136,11 +150,11 @@ def merge(remote: dict[str, Any], result: Result) -> list[tuple[int, str, float]
             if local is None:
                 cur = conn.execute(
                     "INSERT INTO episodes(feed_id, uid, guid, title, description, published, duration, image, audio_url, "
-                    "audio_type, transcribe_requested_at, remote_audio, created_at, updated_at) "
-                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    "audio_type, transcribe_requested_at, remote_audio, deleted, created_at, updated_at) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (feed[0], r["uid"], r["guid"], r["title"], r["description"] or "", r["published"], r["duration"],
                      r["image"], r["audio_url"], r["audio_type"], r["transcribe_requested_at"], r["remote_audio"] or 0,
-                     r["created_at"], r["updated_at"]))
+                     r.get("deleted") or 0, r["created_at"], r["updated_at"]))
                 local_id, local_rev = int(cur.lastrowid), None
                 result.merged["episodes"] += 1
             else:
@@ -150,11 +164,15 @@ def merge(remote: dict[str, Any], result: Result) -> list[tuple[int, str, float]
                         "UPDATE episodes SET uid=?, title=?, description=?, published=COALESCE(?, published), "
                         "duration=COALESCE(duration, ?), image=?, audio_url=?, audio_type=?, "
                         "transcribe_requested_at=MAX(COALESCE(transcribe_requested_at, 0), COALESCE(?, 0)), "
-                        "remote_audio=MAX(remote_audio, ?), updated_at=? WHERE id=?",
+                        "remote_audio=MAX(remote_audio, ?), deleted=MAX(deleted, ?), updated_at=? WHERE id=?",
                         (r["uid"], r["title"], r["description"] or "", r["published"], r["duration"], r["image"],
                          r["audio_url"], r["audio_type"], r["transcribe_requested_at"], r["remote_audio"] or 0,
-                         r["updated_at"], local_id))
+                         r.get("deleted") or 0, r["updated_at"], local_id))
                     result.merged["episodes"] += 1
+                if r.get("deleted") and not local["deleted"]:
+                    videos.delete_episode_files(conn, local_id)
+            if r.get("deleted"):
+                continue
             rev = r.get("transcript_rev")
             if rev and (local_rev is None or rev > local_rev + 1e-3):
                 downloads.append((local_id, r["uid"], rev))
@@ -165,19 +183,31 @@ def merge(remote: dict[str, Any], result: Result) -> list[tuple[int, str, float]
             local = conn.execute("SELECT * FROM vocab WHERE uid = ?", (r["uid"],)).fetchone()
             values = (r["text"], arabic.normalize(r["text"]), r["sentence"], r["start"], r["end"], r["sent_start"],
                       r["sent_end"], r["meaning"], r["notes"], r["episode_title"], r["deleted"], r["episode_uid"],
-                      ep_ids.get(r["episode_uid"]), r["updated_at"])
+                      ep_ids.get(r["episode_uid"]), json.dumps(_folder_list(r.get("folders") or [])), r["updated_at"])
             if local is None:
                 conn.execute(
                     "INSERT INTO vocab(text, norm, sentence, start, end, sent_start, sent_end, meaning, notes, "
-                    "episode_title, deleted, episode_uid, episode_id, updated_at, uid, created_at) "
-                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (*values, r["uid"], r["created_at"]))
+                    "episode_title, deleted, episode_uid, episode_id, folders, updated_at, uid, created_at) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (*values, r["uid"], r["created_at"]))
                 result.merged["vocab"] += 1
             elif _newer(r, local):
                 conn.execute(
                     "UPDATE vocab SET text=?, norm=?, sentence=?, start=?, end=?, sent_start=?, sent_end=?, meaning=?, "
-                    "notes=?, episode_title=?, deleted=?, episode_uid=?, episode_id=?, updated_at=? WHERE id=?",
+                    "notes=?, episode_title=?, deleted=?, episode_uid=?, episode_id=?, folders=?, updated_at=? WHERE id=?",
                     (*values, local["id"]))
                 result.merged["vocab"] += 1
+
+        # Vocab folders
+        for r in remote.get("folders", []):
+            local = conn.execute("SELECT * FROM vocab_folders WHERE uid = ?", (r["uid"],)).fetchone()
+            if local is None:
+                conn.execute("INSERT INTO vocab_folders(uid, name, deleted, created_at, updated_at) VALUES(?,?,?,?,?)",
+                             (r["uid"], r["name"], r["deleted"], r["created_at"], r["updated_at"]))
+                result.merged["folders"] += 1
+            elif _newer(r, local):
+                conn.execute("UPDATE vocab_folders SET name=?, deleted=?, updated_at=? WHERE id=?",
+                             (r["name"], r["deleted"], r["updated_at"], local["id"]))
+                result.merged["folders"] += 1
 
         # Definitions (immutable cache entries): union
         for r in remote.get("definitions", []):
@@ -263,7 +293,8 @@ def run(drive: Drive, device_id: str, sync_audio: bool, can_transcribe: bool) ->
             conn.execute("UPDATE episodes SET synced_rev = ? WHERE id = ?", (ep["transcribed_at"], ep["id"]))
         result.uploaded_transcripts += 1
 
-    # 2. Publish compressed audio copies.
+    # 2. Publish the user's own videos (always: Drive is where they're kept), then audio copies.
+    upload_videos(drive, files, result)
     if sync_audio:
         upload_audio_copies(drive, files, result)
 
@@ -294,7 +325,10 @@ def run(drive: Drive, device_id: str, sync_audio: bool, can_transcribe: bool) ->
         result.library_uploaded = True
         break
 
-    # 6. Transcription requests from other devices (e.g. the phone).
+    # 6. Free Drive space used by deleted videos (any device may do this; it's idempotent).
+    remove_deleted_media(drive, files)
+
+    # 7. Transcription requests from other devices (e.g. the phone).
     if can_transcribe:
         result.requested_transcriptions = requested_transcriptions()
     return result
@@ -304,7 +338,8 @@ def upload_audio_copies(drive: Drive, files: dict[str, dict[str, Any]], result: 
     with db.session() as conn:
         rows = conn.execute(
             "SELECT id, uid, audio_path, sync_audio_path FROM episodes "
-            "WHERE status = 'done' AND remote_audio = 0 AND (sync_audio_path IS NOT NULL OR audio_path IS NOT NULL)"
+            "WHERE status = 'done' AND remote_audio = 0 AND deleted = 0 AND audio_url NOT LIKE 'drive:%' "
+            "AND (sync_audio_path IS NOT NULL OR audio_path IS NOT NULL)"
         ).fetchall()
     for ep in rows:
         copy = Path(ep["sync_audio_path"]) if ep["sync_audio_path"] else None
@@ -328,6 +363,40 @@ def upload_audio_copies(drive: Drive, files: dict[str, dict[str, Any]], result: 
         result.uploaded_audio += 1
 
 
+def upload_videos(drive: Drive, files: dict[str, dict[str, Any]], result: Result) -> None:
+    """Upload videos added on this device (before the library says they're available)."""
+    with db.session() as conn:
+        rows = conn.execute(
+            "SELECT id, audio_url, audio_type, audio_path FROM episodes "
+            "WHERE audio_url LIKE 'drive:%' AND remote_audio = 0 AND deleted = 0 AND audio_path IS NOT NULL").fetchall()
+    for ep in rows:
+        src = Path(ep["audio_path"])
+        if not src.exists():
+            continue
+        name = videos.drive_name(ep["audio_url"])
+        if name not in files:
+            files[name] = drive.upload(name, src, ep["audio_type"] or "video/mp4")
+        with db.session() as conn:
+            conn.execute("UPDATE episodes SET remote_audio = 1 WHERE id = ?", (ep["id"],))
+        result.uploaded_videos += 1
+
+
+def remove_deleted_media(drive: Drive, files: dict[str, dict[str, Any]]) -> None:
+    with db.session() as conn:
+        rows = conn.execute("SELECT uid, audio_url FROM episodes WHERE deleted = 1").fetchall()
+    for ep in rows:
+        names = [transcript_name(ep["uid"]), audio_name(ep["uid"])]
+        if videos.is_drive_media(ep["audio_url"]):
+            names.append(videos.drive_name(ep["audio_url"]))
+        for name in names:
+            meta = files.pop(name, None)
+            if meta is not None:
+                try:
+                    drive.delete(meta["id"])
+                except Exception as exc:  # already gone, or a transient error: try again next sync
+                    log.info("Couldn't delete %s from Drive: %s", name, exc)
+
+
 def requested_transcriptions() -> list[int]:
     """Episodes another device asked this one to transcribe, not yet done or attempted."""
     from .. import jobs
@@ -335,7 +404,7 @@ def requested_transcriptions() -> list[int]:
     with db.session() as conn:
         rows = conn.execute(
             """SELECT e.id FROM episodes e JOIN feeds f ON f.id = e.feed_id
-               WHERE f.deleted = 0 AND e.transcribe_requested_at IS NOT NULL
+               WHERE f.deleted = 0 AND e.deleted = 0 AND e.transcribe_requested_at IS NOT NULL
                  AND e.status IN ('new', 'failed')
                  AND e.transcribe_requested_at > COALESCE(e.transcribed_at, 0)
                  AND e.transcribe_requested_at > COALESCE(

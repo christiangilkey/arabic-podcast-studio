@@ -7,11 +7,11 @@ import re
 from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
-from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse, Response
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
-from .. import db, exporters, jobs, sync
+from .. import db, exporters, jobs, sync, videos
 
 router = APIRouter(tags=["episodes"])
 
@@ -31,8 +31,8 @@ class TranscribeIn(BaseModel):
 def _episode(episode_id: int) -> dict[str, Any]:
     with db.session() as conn:
         row = conn.execute(
-            "SELECT e.*, f.title AS feed_title, f.image AS feed_image FROM episodes e "
-            "JOIN feeds f ON f.id = e.feed_id WHERE e.id = ?",
+            "SELECT e.*, f.title AS feed_title, f.image AS feed_image, f.url AS feed_url FROM episodes e "
+            "JOIN feeds f ON f.id = e.feed_id WHERE e.id = ? AND e.deleted = 0",
             (episode_id,),
         ).fetchone()
     if row is None:
@@ -43,7 +43,7 @@ def _episode(episode_id: int) -> dict[str, Any]:
 @router.get("/episodes")
 def list_episodes(feed_id: int | None = None, status: str | None = None, q: str | None = None,
                   limit: int = 100, offset: int = 0) -> dict[str, Any]:
-    where, args = [], []
+    where, args = ["e.deleted = 0"], []
     if feed_id is not None:
         where.append("e.feed_id = ?")
         args.append(feed_id)
@@ -60,13 +60,14 @@ def list_episodes(feed_id: int | None = None, status: str | None = None, q: str 
         total = conn.execute(f"SELECT COUNT(*) FROM episodes e {clause}", args).fetchone()[0]
         rows = conn.execute(
             f"""SELECT e.id, e.feed_id, e.title, e.published, e.duration, e.image, e.status, e.progress,
-                       e.error, e.audio_path IS NOT NULL AS has_audio, f.title AS feed_title, f.image AS feed_image
+                       e.error, e.audio_path IS NOT NULL AS has_audio, e.audio_type, f.url AS feed_url,
+                       f.title AS feed_title, f.image AS feed_image
                 FROM episodes e JOIN feeds f ON f.id = e.feed_id {clause}
                 ORDER BY COALESCE(e.published, e.created_at) DESC, e.id DESC LIMIT ? OFFSET ?""",
             [*args, limit, offset],
         ).fetchall()
         counts = dict(conn.execute(
-            f"SELECT e.status, COUNT(*) FROM episodes e {'WHERE e.feed_id = ?' if feed_id is not None else ''} "
+            f"SELECT e.status, COUNT(*) FROM episodes e WHERE e.deleted = 0 {'AND e.feed_id = ?' if feed_id is not None else ''} "
             "GROUP BY e.status", [feed_id] if feed_id is not None else []).fetchall())
     return {"total": total, "items": db.rows_to_dicts(rows), "counts": counts,
             "current": jobs.worker.current_episode}
@@ -83,6 +84,31 @@ def transcribe(body: TranscribeIn) -> dict[str, Any]:
     if queued:
         sync.request()  # so other devices see the queued state
     return {"queued": queued}
+
+
+@router.post("/videos")
+async def upload_video(request: Request, filename: str, title: str | None = None) -> dict[str, Any]:
+    """Raw request body = the video file (streamed to disk, so any size works)."""
+    try:
+        ep = await videos.save_upload(filename, request.stream(), title)
+    except videos.UploadError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    jobs.enqueue([ep["id"]])
+    sync.request()  # uploads the video to Drive
+    return ep
+
+
+@router.delete("/episodes/{episode_id}")
+def delete_episode(episode_id: int) -> dict[str, bool]:
+    ep = _episode(episode_id)
+    if not videos.is_local_feed(ep["feed_url"]):
+        raise HTTPException(400, "Podcast episodes can't be deleted; remove the podcast instead.")
+    jobs.cancel(episode_id)
+    with db.session() as conn:
+        videos.delete_episode_files(conn, episode_id)
+        conn.execute("UPDATE episodes SET deleted = 1 WHERE id = ?", (episode_id,))
+    sync.request()  # spreads the deletion and removes the video from Drive
+    return {"ok": True}
 
 
 @router.post("/episodes/{episode_id}/cancel")
@@ -112,13 +138,38 @@ def transcript(episode_id: int) -> dict[str, Any]:
     }
 
 
+def _drive_stream(name: str, media_type: str, request: Request) -> Response:
+    try:
+        upstream = sync.open_media(name, request.headers.get("range"))
+    except FileNotFoundError as exc:
+        raise HTTPException(404, "The video isn't in your Google Drive.") from exc
+    except Exception as exc:
+        raise HTTPException(502, f"Couldn't stream from Google Drive: {exc}") from exc
+    headers = {k: v for k, v in upstream.headers.items()
+               if k.lower() in ("content-length", "content-range", "accept-ranges")}
+    headers.setdefault("accept-ranges", "bytes")
+
+    def body():
+        try:
+            yield from upstream.iter_bytes(1 << 16)
+        finally:
+            upstream.close()
+
+    return StreamingResponse(body(), status_code=upstream.status_code, media_type=media_type, headers=headers)
+
+
 @router.get("/episodes/{episode_id}/audio")
-def episode_audio(episode_id: int) -> Response:
+def episode_audio(episode_id: int, request: Request) -> Response:
     ep = _episode(episode_id)
     if ep["audio_path"] and Path(ep["audio_path"]).exists():
         path = Path(ep["audio_path"])
         media = ep["audio_type"] or mimetypes.guess_type(path.name)[0] or "audio/mpeg"
         return FileResponse(path, media_type=media)  # supports HTTP Range for seeking
+    if videos.is_drive_media(ep["audio_url"]):
+        # A video added on another device: stream it from Drive (seeking works via Range).
+        if not ep["remote_audio"]:
+            raise HTTPException(404, "This video hasn't finished uploading from the other device yet.")
+        return _drive_stream(videos.drive_name(ep["audio_url"]), ep["audio_type"] or "video/mp4", request)
     # Transcribed on another device (or original deleted): the synced copy is the exact audio
     # the transcript was made from, so timestamps line up even if the feed inserts ads.
     copy = Path(ep["sync_audio_path"]) if ep["sync_audio_path"] else None

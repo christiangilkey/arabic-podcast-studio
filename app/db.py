@@ -17,7 +17,7 @@ from typing import Any
 
 from . import paths
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS feeds (
@@ -110,6 +110,16 @@ CREATE TABLE IF NOT EXISTS vocab (
     created_at REAL NOT NULL
 );
 
+-- Vocab folders (schema v3). A word can be in several: vocab.folders holds a JSON list of folder uids.
+CREATE TABLE IF NOT EXISTS vocab_folders (
+    id         INTEGER PRIMARY KEY,
+    uid        TEXT NOT NULL UNIQUE,
+    name       TEXT NOT NULL,
+    deleted    INTEGER NOT NULL DEFAULT 0,
+    created_at REAL NOT NULL,
+    updated_at REAL
+);
+
 CREATE TABLE IF NOT EXISTS settings (
     key   TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -164,15 +174,16 @@ _SYNC_COLUMNS = {
     "feeds": [("uid", "TEXT"), ("updated_at", "REAL"), ("deleted", "INTEGER NOT NULL DEFAULT 0")],
     "episodes": [("uid", "TEXT"), ("updated_at", "REAL"), ("transcribe_requested_at", "REAL"),
                  ("remote_audio", "INTEGER NOT NULL DEFAULT 0"), ("synced_rev", "REAL"),
-                 ("sync_audio_path", "TEXT")],
+                 ("sync_audio_path", "TEXT"), ("deleted", "INTEGER NOT NULL DEFAULT 0")],
     "vocab": [("uid", "TEXT"), ("updated_at", "REAL"), ("deleted", "INTEGER NOT NULL DEFAULT 0"),
-              ("episode_uid", "TEXT")],
+              ("episode_uid", "TEXT"), ("folders", "TEXT NOT NULL DEFAULT '[]'")],
 }
 
 # updated_at is bumped automatically whenever a synced field changes locally. Sync writes
 # run inside `sync_writes()`, which parks a row in sync_guard for the length of their own
 # transaction so the triggers stand down (no other connection ever sees that row).
-_TRIGGER_NAMES = ("feeds_ins", "feeds_upd", "episodes_ins", "episodes_upd", "vocab_ins", "vocab_upd")
+_TRIGGER_NAMES = ("feeds_ins", "feeds_upd", "episodes_ins", "episodes_upd", "vocab_ins", "vocab_upd",
+                  "folders_ins", "folders_upd")
 _TRIGGERS = f"""
 CREATE TABLE IF NOT EXISTS sync_guard (active INTEGER);
 CREATE TRIGGER IF NOT EXISTS feeds_ins AFTER INSERT ON feeds WHEN NEW.updated_at IS NULL AND NOT EXISTS (SELECT 1 FROM sync_guard)
@@ -187,15 +198,21 @@ BEGIN UPDATE episodes SET updated_at = {NOW_SQL} WHERE id = NEW.id; END;
 CREATE TRIGGER IF NOT EXISTS episodes_upd AFTER UPDATE ON episodes
 WHEN NEW.updated_at IS OLD.updated_at AND NOT EXISTS (SELECT 1 FROM sync_guard) AND (NEW.title IS NOT OLD.title OR NEW.audio_url IS NOT OLD.audio_url
   OR NEW.duration IS NOT OLD.duration OR NEW.transcribe_requested_at IS NOT OLD.transcribe_requested_at
-  OR NEW.synced_rev IS NOT OLD.synced_rev OR NEW.remote_audio IS NOT OLD.remote_audio)
+  OR NEW.synced_rev IS NOT OLD.synced_rev OR NEW.remote_audio IS NOT OLD.remote_audio OR NEW.deleted IS NOT OLD.deleted)
 BEGIN UPDATE episodes SET updated_at = {NOW_SQL} WHERE id = NEW.id; END;
 
 CREATE TRIGGER IF NOT EXISTS vocab_ins AFTER INSERT ON vocab WHEN NEW.updated_at IS NULL AND NOT EXISTS (SELECT 1 FROM sync_guard)
 BEGIN UPDATE vocab SET updated_at = {NOW_SQL} WHERE id = NEW.id; END;
 CREATE TRIGGER IF NOT EXISTS vocab_upd AFTER UPDATE ON vocab
 WHEN NEW.updated_at IS OLD.updated_at AND NOT EXISTS (SELECT 1 FROM sync_guard) AND (NEW.text IS NOT OLD.text OR NEW.meaning IS NOT OLD.meaning
-  OR NEW.notes IS NOT OLD.notes OR NEW.deleted IS NOT OLD.deleted)
+  OR NEW.notes IS NOT OLD.notes OR NEW.deleted IS NOT OLD.deleted OR NEW.folders IS NOT OLD.folders)
 BEGIN UPDATE vocab SET updated_at = {NOW_SQL} WHERE id = NEW.id; END;
+
+CREATE TRIGGER IF NOT EXISTS folders_ins AFTER INSERT ON vocab_folders WHEN NEW.updated_at IS NULL AND NOT EXISTS (SELECT 1 FROM sync_guard)
+BEGIN UPDATE vocab_folders SET updated_at = {NOW_SQL} WHERE id = NEW.id; END;
+CREATE TRIGGER IF NOT EXISTS folders_upd AFTER UPDATE ON vocab_folders
+WHEN NEW.updated_at IS OLD.updated_at AND NOT EXISTS (SELECT 1 FROM sync_guard) AND (NEW.name IS NOT OLD.name OR NEW.deleted IS NOT OLD.deleted)
+BEGIN UPDATE vocab_folders SET updated_at = {NOW_SQL} WHERE id = NEW.id; END;
 """
 
 
