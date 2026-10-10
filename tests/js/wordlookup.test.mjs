@@ -60,3 +60,20 @@ test("formatTime", () => {
   assert.equal(formatTime(3725), "1:02:05");
   assert.equal(formatTime(NaN), "0:00");
 });
+
+// ----- "new version available" comparison (web/js/updatenotice.js) -----
+// The module imports the app shell for its popup, so the two pure functions are checked
+// through copies of the same source text.
+import { readFileSync } from "node:fs";
+const src = readFileSync(new URL("../../web/js/updatenotice.js", import.meta.url), "utf8");
+const body = src.slice(src.indexOf("export function parseVersion"), src.indexOf("/** Only ever a link")).replace(/export /g, "");
+const { parseVersion, isNewer } = new Function(`${body}; return { parseVersion, isNewer };`)();
+test("update check compares version numbers, not text", () => {
+  assert.deepEqual(parseVersion("v0.10.1"), [0, 10, 1]);
+  assert.equal(isNewer("0.8.0", "0.7.0"), true);
+  assert.equal(isNewer("0.10.0", "0.9.9"), true, "0.10 is newer than 0.9");
+  assert.equal(isNewer("1.0.0", "0.99.0"), true);
+  assert.equal(isNewer("0.8.0", "0.8.0"), false, "the same version is not an update");
+  assert.equal(isNewer("0.7.9", "0.8.0"), false, "never offer a downgrade");
+  assert.equal(isNewer("0.8.0", "0.8.0-dev.12"), false);
+});

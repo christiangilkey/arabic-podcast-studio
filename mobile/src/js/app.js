@@ -12,6 +12,7 @@ import * as friends from "./pages/friends.js";
 import * as chat from "./pages/chat.js";
 import { startBadge } from "./social.js";
 import { initSwipe } from "./swipe.js";
+import { isNewer, showUpdateNotice } from "./updatenotice.js";
 import { addUploadedVideo, handle } from "./backend.js";
 import { accessToken, drive } from "./drive.js";
 import { App, Filesystem, GoogleDriveAuth, NativeHttp, Share, isNative } from "./native.js";
@@ -390,6 +391,22 @@ async function route() {
   }
 }
 
+// ---------- updates ----------
+const RELEASES = "https://api.github.com/repos/christiangilkey/tamkeen/releases/latest";
+
+/** On opening the app: if GitHub has a newer release than this build, show a popup linking to it. */
+async function checkForUpdate() {
+  try {
+    const { APP_VERSION } = await import("./version.js");
+    if (!APP_VERSION || APP_VERSION.startsWith("0.0.0")) return; // a test build, not a release
+    const res = await fetch(RELEASES, { headers: { Accept: "application/vnd.github+json" } });
+    if (!res.ok) return;
+    const data = await res.json();
+    const latest = String(data.tag_name || "").replace(/^v/, "");
+    if (isNewer(latest, APP_VERSION)) showUpdateNotice({ latest, current: APP_VERSION, url: data.html_url });
+  } catch { /* offline, or GitHub unreachable: try again next time the app opens */ }
+}
+
 // ---------- boot ----------
 async function boot() {
   await loadSettings();
@@ -400,6 +417,7 @@ async function boot() {
   initSwipe();
   route();
   startBadge();
+  setTimeout(checkForUpdate, 3000);
 
   // Sync on start, when returning to the app, and every 5 minutes while open.
   let lastDone = new Set(lib.episodes.filter((e) => e.transcript_rev).map((e) => e.uid));

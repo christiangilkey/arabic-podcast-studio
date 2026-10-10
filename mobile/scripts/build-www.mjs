@@ -2,7 +2,7 @@
 //   node scripts/build-www.mjs
 // Shared files are copied (not linked) so the Android build has a self-contained web bundle.
 
-import { cpSync, existsSync, mkdirSync, rmSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -28,6 +28,7 @@ const SHARED = [
   "js/pages/search.js",
   "js/pages/friends.js",
   "js/pages/chat.js",
+  "js/updatenotice.js",
   "js/pages/home.js",
   "js/progress.js",
   "js/pages/reader.js",
@@ -49,4 +50,7 @@ for (const rel of SHARED) {
 cpSync(join(mobile, "node_modules", "@capacitor", "core", "dist", "index.js"), join(out, "js", "vendor", "capacitor-core.js"));
 // Phone-specific files (index.html, app shell, storage, sync, settings) override shared ones.
 cpSync(join(mobile, "src"), out, { recursive: true });
-console.log(`Built ${out}`);
+// This build's version (set by the release workflow), so the app can tell when a newer one exists.
+const version = process.env.APP_VERSION || "0.0.0-dev";
+writeFileSync(join(out, "js", "version.js"), `export const APP_VERSION = ${JSON.stringify(version)};\n`);
+console.log(`Built ${out} (version ${version})`);

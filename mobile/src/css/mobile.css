@@ -68,3 +68,6 @@ button, .btn { min-height: 38px; }
 .tabbar.has-blob a { position: relative; z-index: 1; }
 .tabbar.has-blob a.active .ico { background: transparent; }
 #view { overflow-x: hidden; }
+
+/* The update popup sits above the tab bar, in thumb reach. */
+.update-notice { left: 12px; right: 12px; bottom: calc(76px + env(safe-area-inset-bottom)); max-width: none; }

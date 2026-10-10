@@ -11,6 +11,7 @@ import * as welcome from "./pages/welcome.js";
 import * as friends from "./pages/friends.js";
 import * as chat from "./pages/chat.js";
 import { startBadge } from "./social.js";
+import { showUpdateNotice } from "./updatenotice.js";
 
 // ---------- API ----------
 export async function api(path, { method = "GET", body, raw } = {}) {
@@ -346,6 +347,12 @@ async function boot() {
   window.addEventListener("hashchange", route);
   route();
   startBadge();
+  // A newer version? Tell the user once per start, with a link to the release page.
+  setTimeout(() => {
+    api("/updates/check").then((r) => {
+      if (r && r.update_available) showUpdateNotice({ latest: r.latest, current: r.current, url: r.url });
+    }).catch(() => {});
+  }, 2500);
 }
 
 boot();
