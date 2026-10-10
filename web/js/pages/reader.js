@@ -229,14 +229,14 @@ export async function render(view, { id, data, query }) {
   let fontTimer;
   const changeFont = (d) => {
     const s = state.status?.settings || {};
-    const size = Math.max(16, Math.min(56, (s.font_size || 26) + d));
-    s.font_size = size;
-    document.documentElement.style.setProperty("--ar-size", `${size}px`);
+    const size = Math.max(12, Math.min(40, (s.page_font_size || 17) + d));
+    s.page_font_size = size;
+    document.documentElement.style.setProperty("--page-size", `${size}px`);
     clearTimeout(fontTimer);
-    fontTimer = setTimeout(() => saveSettings({ font_size: size }), 400);
+    fontTimer = setTimeout(() => saveSettings({ page_font_size: size }), 400);
   };
-  $("#font-down").onclick = () => changeFont(-2);
-  $("#font-up").onclick = () => changeFont(2);
+  $("#font-down").onclick = () => changeFont(-1);
+  $("#font-up").onclick = () => changeFont(1);
 
   // Remember where you were reading, and how far through the page you've got (for Home's
   // "Continue" button: a page counts as unfinished until you've seen 70% of it).

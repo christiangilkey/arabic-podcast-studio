@@ -301,7 +301,8 @@ DEFAULT_SETTINGS: dict[str, Any] = {
     "delete_audio_after": False,    # delete local audio once transcribed
     "stream_from_source": False,    # play from the original URL; audio is only kept temporarily
     "theme": "system",              # system | light | dark
-    "font_size": 26,                # transcript font size in px
+    "font_size": 26,                # transcript font size in px (podcasts and videos)
+    "page_font_size": 17,           # text size for imported web pages (set separately; smaller by default)
     "welcome_seen": False,
     "beam_size": 5,
     # AI word definitions (users bring their own API key).

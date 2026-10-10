@@ -80,11 +80,16 @@ export async function render(view) {
         <label class="switch"><input type="radio" name="theme" value="light" ${s.theme === "light" ? "checked" : ""}> Light</label>
         <label class="switch"><input type="radio" name="theme" value="dark" ${s.theme === "dark" ? "checked" : ""}> Dark</label>
       </div>
-      <div class="row">Transcript text size:
+      <div class="row">Podcast &amp; video text size:
         <input type="range" id="font" min="16" max="56" step="1" value="${s.font_size}" style="width:220px">
         <span id="font-val">${s.font_size}px</span>
       </div>
       <div class="ar" dir="rtl" style="font-size:var(--ar-size);line-height:2.1">مَرْحَبًا بِكُمْ فِي حَلْقَةٍ جَدِيدَةٍ مِنَ البودكاست.</div>
+      <div class="row">Web page text size:
+        <input type="range" id="page-font" min="12" max="40" step="1" value="${s.page_font_size || 17}" style="width:220px">
+        <span id="page-font-val">${s.page_font_size || 17}px</span>
+      </div>
+      <div class="ar" dir="rtl" style="font-size:var(--page-size);line-height:2">القهوة مشروب يُحضر من بذور البن المحمصة، وتعد واحدة من أكثر المشروبات شعبية في العالم.</div>
     </section>
 
     <section class="card stack">
@@ -225,6 +230,15 @@ export async function render(view) {
     document.documentElement.style.setProperty("--ar-size", `${v}px`);
     clearTimeout(fontTimer);
     fontTimer = setTimeout(() => saveSettings({ font_size: v }), 300);
+  };
+
+  let pageFontTimer;
+  $("#page-font").oninput = (e) => {
+    const v = Number(e.target.value);
+    $("#page-font-val").textContent = `${v}px`;
+    document.documentElement.style.setProperty("--page-size", `${v}px`);
+    clearTimeout(pageFontTimer);
+    pageFontTimer = setTimeout(() => saveSettings({ page_font_size: v }), 300);
   };
 
   $("#open-data").onclick = async () => {

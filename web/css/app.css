@@ -27,6 +27,7 @@
   --shadow: 0 1px 2px rgba(0, 0, 0, .06), 0 4px 16px rgba(0, 0, 0, .06);
   --radius: 14px;
   --ar-size: 26px;
+  --page-size: 17px;
   --ui-font: ui-rounded, "SF Pro Rounded", "Nunito", "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system,
     Roboto, "Helvetica Neue", Arial, sans-serif;
   /* Tamkeen's identity, taken from the logo: plum-to-teal gradient, gold wordmark. */
@@ -593,7 +594,7 @@ mark { background: var(--hl); color: var(--hl-ink); border-radius: 3px; padding:
 .browser-btn:hover { border-color: var(--accent); }
 
 /* ---------- reader (imported web pages) ---------- */
-.reader-text { position: absolute; inset: 0; overflow-y: auto; padding: 24px max(24px, calc((100% - 820px) / 2)) 40vh; font-family: var(--ar-font); font-size: var(--ar-size); line-height: 2; overscroll-behavior: contain; }
+.reader-text { position: absolute; inset: 0; overflow-y: auto; padding: 24px max(24px, calc((100% - 820px) / 2)) 40vh; font-family: var(--ar-font); font-size: var(--page-size); line-height: 2; overscroll-behavior: contain; }
 .reader-text .reader-title { font-size: 1.35em; line-height: 1.5; margin: 0 0 .6em; }
 .reader-text h2, .reader-text h3, .reader-text h4 { line-height: 1.6; margin: 1em 0 .3em; }
 .reader-text h2 { font-size: 1.2em; }
@@ -605,7 +606,7 @@ mark { background: var(--hl); color: var(--hl-ink); border-radius: 3px; padding:
 .reader-text .w { border-radius: 5px; cursor: pointer; padding: 0 .04em; transition: background-color .08s; }
 .reader-text .w:hover { background: var(--surface-2); }
 .reader-text .w.cur { background: var(--hl); color: var(--hl-ink); }
-.reader-text [dir=auto]:not(:dir(rtl)) { font-family: var(--ui-font); font-size: .78em; line-height: 1.75; }
+.reader-text [dir=auto]:not(:dir(rtl)) { font-family: var(--ui-font); font-size: .94em; line-height: 1.7; }
 @media (max-width: 640px) { .reader-text { padding: 16px 16px 40vh; } }
 
 /* ================================================================ Tamkeen identity

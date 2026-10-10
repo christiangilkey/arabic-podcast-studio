@@ -51,8 +51,10 @@ export async function render(view) {
       </div>
       <label class="check"><input type="checkbox" id="haptics" ${s.haptics !== false ? "checked" : ""}>
         <span>Vibrate lightly when I tap a word or save one</span></label>
-      <div class="row">Text size: <input type="range" id="font" min="16" max="48" value="${s.font_size}" style="flex:1"> <span id="font-val">${s.font_size}px</span></div>
+      <div class="row">Podcast &amp; video text: <input type="range" id="font" min="16" max="48" value="${s.font_size}" style="flex:1"> <span id="font-val">${s.font_size}px</span></div>
       <div class="ar" dir="rtl" style="font-size:var(--ar-size);line-height:2">مَرْحَبًا بِكُمْ فِي البودكاست</div>
+      <div class="row">Web page text: <input type="range" id="page-font" min="12" max="40" value="${s.page_font_size || 17}" style="flex:1"> <span id="page-font-val">${s.page_font_size || 17}px</span></div>
+      <div class="ar" dir="rtl" style="font-size:var(--page-size);line-height:2">القهوة مشروب يُحضر من بذور البن المحمصة.</div>
     </section>
 
     <section class="card small muted">Tamkeen for Android · <a href="https://christiangilkey.github.io/tamkeen/privacy.html" target="_blank" rel="noopener">Privacy policy</a></section>
@@ -134,6 +136,10 @@ export async function render(view) {
   $("#font").oninput = (e) => {
     $("#font-val").textContent = `${e.target.value}px`;
     saveSettings({ font_size: Number(e.target.value) });
+  };
+  $("#page-font").oninput = (e) => {
+    $("#page-font-val").textContent = `${e.target.value}px`;
+    saveSettings({ page_font_size: Number(e.target.value) });
   };
   return off;
 }

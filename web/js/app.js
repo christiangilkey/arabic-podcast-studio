@@ -234,6 +234,7 @@ export function applySettings(s) {
   if (s.theme === "light" || s.theme === "dark") root.dataset.theme = s.theme;
   else delete root.dataset.theme;
   root.style.setProperty("--ar-size", `${s.font_size || 26}px`);
+  root.style.setProperty("--page-size", `${s.page_font_size || 17}px`);
   if (state.status) state.status.settings = s;
 }
 
