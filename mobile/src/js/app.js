@@ -92,6 +92,21 @@ export async function audioUrl(uid) {
   return ep ? ep.audio_url : "";
 }
 
+// ---------- online features (friends, sharing) ----------
+// The "Web" Google client that Supabase trusts; Android issues the ID token for it.
+const WEB_CLIENT_ID = "419555269865-0954ljffgrnbveq04lvh3ii6c032rhv3.apps.googleusercontent.com";
+
+/** Google ID token for the online features. Google gets a hash of a one-time code (nonce) and
+ * Supabase the code itself, so a token can't be replayed by anyone else. */
+export async function googleIdToken() {
+  if (!isNative) throw new Error("Connecting works in the installed Android app.");
+  const nonce = Array.from(crypto.getRandomValues(new Uint8Array(16)), (b) => b.toString(16).padStart(2, "0")).join("");
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(nonce));
+  const hashed = Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
+  const r = await GoogleDriveAuth.getIdToken({ serverClientId: WEB_CLIENT_ID, nonce: hashed });
+  return { token: r.idToken, nonce };
+}
+
 // ---------- own videos ----------
 // Videos stream from the user's Drive through DriveMediaWebViewClient.java, which adds the
 // sign-in token that a <video> element can't send itself.

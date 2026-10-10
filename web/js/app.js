@@ -127,6 +127,12 @@ export async function audioUrl(episodeId) {
   return `/api/episodes/${episodeId}/audio`;
 }
 
+/** Google ID token for the online features (the desktop gets it from its Drive sign-in). */
+export async function googleIdToken() {
+  const r = await api("/sync/id-token", { method: "POST" });
+  return { token: r.token };
+}
+
 /** Add one of the user's own video files. Resolves to the new episode. */
 export function uploadVideo(file, onProgress) {
   return new Promise((resolve, reject) => {

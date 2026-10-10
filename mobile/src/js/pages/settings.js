@@ -2,6 +2,7 @@
 
 import { esc, h, on, toast, saveSettings } from "../app.js";
 import { PROVIDERS, define } from "../definer.js";
+import { accountSection } from "../components/account.js";
 import { transport } from "../define-service.js";
 import { signIn, signOut } from "../drive.js";
 import { isNative } from "../native.js";
@@ -55,6 +56,7 @@ export async function render(view) {
     <section class="card small muted">Arabic Podcast Studio for Android · <a href="https://christiangilkey.github.io/arabic-podcast-studio/privacy.html" target="_blank" rel="noopener">Privacy policy</a></section>
   </div>`));
   const $ = (q) => view.querySelector(q);
+  $("#account").closest("section").after(accountSection());
 
   function paintAccount(st = syncState) {
     const box = $("#account");

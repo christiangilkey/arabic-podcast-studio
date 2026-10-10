@@ -66,6 +66,15 @@ def logout() -> dict[str, Any]:
     return sync.status()
 
 
+@router.post("/id-token")
+def google_id_token() -> dict[str, str]:
+    """For the online features (friends, sharing): proves to Supabase who is signed in."""
+    try:
+        return {"token": oauth.id_token()}
+    except oauth.AuthError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
 @router.post("/now")
 def sync_now() -> dict[str, Any]:
     if not oauth.signed_in():

@@ -3,6 +3,7 @@
 import { api, esc, h, on, toast, download, state, loadStatus, saveSettings, fmtBytes } from "../app.js";
 import { modelManager, gpuPanel } from "../components/models.js";
 import { PROVIDERS, define } from "../definer.js";
+import { accountSection } from "../components/account.js";
 
 export async function render(view) {
   const status = await loadStatus();
@@ -31,7 +32,7 @@ export async function render(view) {
       <h2>Sync with Google Drive</h2>
       <p class="small muted">Keep your podcasts, transcripts and vocab in sync between this computer, other computers
         and the Android app. Everything is stored in a private app folder in <em>your own</em> Google Drive that only
-        this app can see. Nothing goes to any other server.</p>
+        this app can see. Sync never goes through any other server.</p>
       <div id="sync-panel"></div>
     </section>
 
@@ -109,6 +110,7 @@ export async function render(view) {
   </div>`));
 
   const $ = (q) => view.querySelector(q);
+  $("#sync").after(accountSection());
   $("#data-dir").textContent = status.data_dir;
   const cleanups = [modelManager($("#models"), { hardware: hw })];
   if (hw.gpu_pack_supported) cleanups.push(gpuPanel($("#gpu"), hw));

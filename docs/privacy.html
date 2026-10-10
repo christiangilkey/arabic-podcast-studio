@@ -11,12 +11,13 @@
 <main>
   <header>
     <img src="icon.png" alt="">
-    <div><h1>Privacy Policy</h1><div class="muted">Arabic Podcast Studio · Last updated October 7, 2026</div></div>
+    <div><h1>Privacy Policy</h1><div class="muted">Arabic Podcast Studio · Last updated October 9, 2026</div></div>
   </header>
 
-  <p>Arabic Podcast Studio is an open-source app that runs on your own devices. The developer does not run any
-  servers for the app and <strong>never receives, sees or stores your data</strong>. This page explains where your
-  data goes when you use each feature.</p>
+  <p>Arabic Podcast Studio is an open-source app that runs on your own devices. Your library, transcripts and
+  vocabulary stay on your devices and in your own Google Drive. The only data that ever reaches a service run for
+  the app is what you choose to use with the optional <a href="#social">friends &amp; sharing</a> features. This
+  page explains where your data goes when you use each feature.</p>
 
   <h2>Data stored on your device</h2>
   <p>Your podcast subscriptions, episode lists, downloaded audio, transcripts, saved vocabulary, settings and any API
@@ -45,11 +46,31 @@
   <a href="https://developers.google.com/terms/api-services-user-data-policy">Google API Services User Data Policy</a>,
   including the Limited Use requirements.</p>
 
-  <h2>AI word definitions (optional)</h2>
+  <h2 id="social">Friends, sharing and quizzes (optional)</h2>
+  <p>These features only work if you choose <em>Connect with Google</em> under "Friends &amp; sharing" in the app's
+  settings. They use an online database hosted by <a href="https://supabase.com/privacy">Supabase</a> on behalf of
+  the app. When you connect, it stores:</p>
+  <ul>
+    <li>your Google account's email address and a user ID (to sign you in), and the username you choose. Other
+      users can look up a username to send a friend request; they never see your email address;</li>
+    <li>your friend requests and friends;</li>
+    <li>words and folders you send to a friend (a copy is stored until they add or dismiss it), and the words in
+      shared folders, visible only to that folder's members;</li>
+    <li>invitations to live quizzes. During a live quiz, the questions, answers and scores are passed between the
+      players' devices through Supabase and are not stored.</li>
+  </ul>
+  <p>Your podcasts, transcripts, private vocabulary, notes and API keys are never sent to this service. Quiz
+  questions are written by the AI provider of the player who starts the quiz, using their own API key (see below).
+  You can disconnect any time in settings. To delete your account and everything stored for it, open an issue at
+  the address below and it will be removed.</p>
+
+  <h2>AI word definitions and quizzes (optional)</h2>
   <p>If you add your own API key for an AI provider (Anthropic Claude, Google Gemini, OpenAI or xAI Grok) and tap a
   word, the app sends that word, the sentence it appears in, the neighbouring sentences and the podcast and episode
-  titles to the provider you chose, using your key. That provider's privacy policy applies to those requests. No
-  other data is sent, and nothing is sent unless you have added a key.</p>
+  titles to the provider you chose, using your key. When you start a vocabulary quiz, the words in the chosen folder
+  and their saved meanings are sent the same way so the provider can write the answer choices. That provider's
+  privacy policy applies to those requests. No other data is sent, and nothing is sent unless you have added a
+  key.</p>
 
   <h2>Analytics and advertising</h2>
   <p>The app contains no analytics, tracking, advertising or crash-reporting services.</p>

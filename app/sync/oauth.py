@@ -151,6 +151,26 @@ def access_token(force_refresh: bool = False) -> str:
         return str(_access["token"])
 
 
+def id_token() -> str:
+    """A fresh Google ID token (proof of who is signed in), used to sign in to the app's online
+    features. Google returns one with every refresh because the "openid" scope was granted."""
+    refresh = db.get_setting("google_refresh_token")
+    if not refresh:
+        raise AuthError("Sign in with Google under “Sync with Google Drive” first.")
+    cid, secret = client_config() or ("", "")
+    resp = httpx.post(TOKEN_URL, data={"client_id": cid, "client_secret": secret, "refresh_token": refresh,
+                                       "grant_type": "refresh_token"}, timeout=30)
+    if resp.status_code in (400, 401):
+        raise AuthError("Your Google sign-in expired. Sign out and in again under “Sync with Google Drive”.")
+    resp.raise_for_status()
+    data = resp.json()
+    with _lock:
+        _access.update(token=data["access_token"], expires=time.time() + int(data.get("expires_in", 3600)) - 60)
+    if not data.get("id_token"):
+        raise AuthError("Google didn't confirm your identity. Sign out and in again under “Sync with Google Drive”.")
+    return str(data["id_token"])
+
+
 def sign_out() -> None:
     refresh = db.get_setting("google_refresh_token")
     if refresh:
