@@ -1,7 +1,7 @@
 -- Self-test of the privacy rules in schema.sql, run in the Supabase SQL editor.
 -- It plays three made-up users (alice, bob, carol), checks what each may do, then ends with an
 -- error on purpose: that rolls everything back, so no test data is left behind. The error
--- message is the report ("RESULTS ok=… bad=…").
+-- message is the report ("RESULTS ok=N bad=[...]").
 
 do $$
 declare
@@ -10,6 +10,7 @@ declare
   c uuid := gen_random_uuid();
   fid uuid;
   folder uuid;
+  conv text;
   n int;
   ok int := 0;
   bad text := '';
@@ -23,14 +24,20 @@ begin
   update public.profiles set username = 'alice_t' where id = a;
   update public.profiles set username = 'bob_t' where id = b;
   update public.profiles set username = 'carol_t' where id = c;
+  conv := least(a::text, b::text) || '_' || greatest(a::text, b::text);
 
   -- ---- as alice
   perform set_config('request.jwt.claims', json_build_object('sub', a, 'role', 'authenticated')::text, true);
   execute 'set local role authenticated';
   insert into public.friendships (requester, addressee) values (a, b) returning id into fid;
   begin
-    insert into public.shares (sender, recipient, payload) values (a, b, '{}');
-    bad := bad || ' share-before-friends-allowed';
+    insert into public.messages (sender, recipient, body) values (a, b, 'hi');
+    bad := bad || ' message-before-friends-allowed';
+  exception when others then ok := ok + 1;
+  end;
+  begin
+    insert into storage.objects (bucket_id, name) values ('voice', conv || '/early.webm');
+    bad := bad || ' voice-before-friends-allowed';
   exception when others then ok := ok + 1;
   end;
   begin
@@ -49,11 +56,24 @@ begin
   select count(*) into n from public.friendships where id = fid and status = 'accepted';
   if n = 0 then ok := ok + 1; else bad := bad || ' requester-could-accept'; end if;
 
-  -- ---- as bob: accept, then share with alice
+  -- ---- as bob: accept, message alice, set a status, share a folder
   perform set_config('request.jwt.claims', json_build_object('sub', b, 'role', 'authenticated')::text, true);
   execute 'set local role authenticated';
   perform public.accept_friend(fid);
-  insert into public.shares (sender, recipient, title, payload) values (b, a, 'hi', '{"words": []}');
+  insert into public.messages (sender, recipient, body) values (b, a, 'marhaba');
+  insert into public.messages (sender, recipient, kind, payload) values (b, a, 'share', '{"folder": null, "words": []}');
+  insert into storage.objects (bucket_id, name) values ('voice', conv || '/note.webm');
+  begin
+    insert into public.messages (sender, recipient, body) values (a, b, 'forged');
+    bad := bad || ' sent-a-message-as-someone-else';
+  exception when others then ok := ok + 1;
+  end;
+  insert into public.statuses (user_id, studying, message) values (b, '{"kind": "youtube", "title": "t"}', 'note');
+  begin
+    insert into public.statuses (user_id, message) values (a, 'forged');
+    bad := bad || ' set-someone-elses-status';
+  exception when others then ok := ok + 1;
+  end;
   insert into public.shared_folders (name, owner) values ('Bob & Alice', b) returning id into folder;
   insert into public.shared_folder_members (folder_id, user_id) values (folder, b);
   insert into public.shared_folder_members (folder_id, user_id) values (folder, a);
@@ -68,11 +88,21 @@ begin
   select count(*) into n from public.friendships where id = fid and status = 'accepted';
   if n = 1 then ok := ok + 1; else bad := bad || ' accept-failed'; end if;
 
-  -- ---- as alice again: sees the share, the folder words, the invite
+  -- ---- as alice again: sees the messages, the status, the voice file, folder words, the invite
   perform set_config('request.jwt.claims', json_build_object('sub', a, 'role', 'authenticated')::text, true);
   execute 'set local role authenticated';
-  select count(*) into n from public.shares;
-  if n = 1 then ok := ok + 1; else bad := bad || ' alice-shares=' || n; end if;
+  select count(*) into n from public.messages;
+  if n = 2 then ok := ok + 1; else bad := bad || ' alice-messages=' || n; end if;
+  update public.messages set body = 'edited' where sender = b;
+  get diagnostics n = row_count;
+  if n = 0 then ok := ok + 1; else bad := bad || ' recipient-edited-a-message'; end if;
+  perform public.mark_read(b);
+  select count(*) into n from public.messages where read_at is not null;
+  if n = 2 then ok := ok + 1; else bad := bad || ' mark-read=' || n; end if;
+  select count(*) into n from public.statuses where user_id = b;
+  if n = 1 then ok := ok + 1; else bad := bad || ' alice-cant-see-friends-status'; end if;
+  select count(*) into n from storage.objects where bucket_id = 'voice' and name like conv || '/%';
+  if n = 1 then ok := ok + 1; else bad := bad || ' alice-voice-files=' || n; end if;
   select count(*) into n from public.shared_words;
   if n = 1 then ok := ok + 1; else bad := bad || ' alice-words=' || n; end if;
   update public.shared_words set meaning = 'book' where folder_id = folder;
@@ -85,9 +115,10 @@ begin
   -- ---- as carol (not a friend of anyone): sees none of it
   perform set_config('request.jwt.claims', json_build_object('sub', c, 'role', 'authenticated')::text, true);
   execute 'set local role authenticated';
-  select (select count(*) from public.friendships) + (select count(*) from public.shares)
-       + (select count(*) from public.shared_folders) + (select count(*) from public.shared_words)
-       + (select count(*) from public.game_invites) into n;
+  select (select count(*) from public.friendships) + (select count(*) from public.messages)
+       + (select count(*) from public.statuses) + (select count(*) from public.shared_folders)
+       + (select count(*) from public.shared_words) + (select count(*) from public.game_invites)
+       + (select count(*) from storage.objects where bucket_id = 'voice') into n;
   if n = 0 then ok := ok + 1; else bad := bad || ' carol-sees=' || n; end if;
   select count(*) into n from public.profiles where username in ('alice_t', 'bob_t');
   if n = 2 then ok := ok + 1; else bad := bad || ' carol-cant-look-up-usernames'; end if;
@@ -96,14 +127,26 @@ begin
     bad := bad || ' carol-wrote-to-folder';
   exception when others then ok := ok + 1;
   end;
+  begin
+    insert into storage.objects (bucket_id, name) values ('voice', conv || '/intruder.webm');
+    bad := bad || ' carol-added-a-voice-file';
+  exception when others then ok := ok + 1;
+  end;
+  begin
+    insert into public.messages (sender, recipient, body) values (c, a, 'spam');
+    bad := bad || ' stranger-could-message';
+  exception when others then ok := ok + 1;
+  end;
   execute 'reset role';
 
-  -- ---- unfriend: alice removes bob
+  -- ---- unfriend: alice removes bob, and his status disappears for her
   perform set_config('request.jwt.claims', json_build_object('sub', a, 'role', 'authenticated')::text, true);
   execute 'set local role authenticated';
   delete from public.friendships where id = fid;
   get diagnostics n = row_count;
   if n = 1 then ok := ok + 1; else bad := bad || ' unfriend-failed'; end if;
+  select count(*) into n from public.statuses where user_id = b;
+  if n = 0 then ok := ok + 1; else bad := bad || ' status-visible-after-unfriend'; end if;
   execute 'reset role';
 
   raise exception 'RESULTS ok=% bad=[%] (everything was rolled back)', ok, coalesce(nullif(bad, ''), ' none');

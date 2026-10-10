@@ -8,6 +8,7 @@ import * as settings from "./pages/settings.js";
 import * as about from "./pages/about.js";
 import * as welcome from "./pages/welcome.js";
 import * as friends from "./pages/friends.js";
+import * as chat from "./pages/chat.js";
 import { startBadge } from "./social.js";
 
 // ---------- API ----------
@@ -205,6 +206,7 @@ const routes = [
   [/^settings$/, settings, () => ({})],
   [/^about$/, about, () => ({})],
   [/^friends$/, friends, () => ({})],
+  [/^chat\/([\w-]+)$/, chat, (m) => ({ friendId: m[1] })],
   [/^welcome$/, welcome, () => ({ step: "welcome" })],
   [/^setup$/, welcome, () => ({ step: "setup" })],
 ];
@@ -232,7 +234,7 @@ async function route() {
   if (!match) { location.hash = "#/"; return; }
   const [mod, params] = match;
   const navKey = mod === library ? "library" : mod === vocab ? "vocab" : mod === settings ? "settings"
-    : mod === about ? "about" : mod === friends ? "friends" : "";
+    : mod === about ? "about" : mod === friends || mod === chat ? "friends" : "";
   document.querySelectorAll("[data-nav]").forEach((a) => a.classList.toggle("active", a.dataset.nav === navKey));
   try {
     cleanup = (await mod.render(view, params)) || null;

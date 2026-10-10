@@ -4,6 +4,7 @@
 
 import { api, esc, h, toast, download, fmtDate, audioUrl, showMenu } from "../app.js";
 import { formatTime } from "../wordlookup.js";
+import * as social from "../social.js";
 
 const DAY = 86400;
 const SORTS = {
@@ -87,6 +88,7 @@ export async function render(view) {
       <span id="bulk-count"></span>
       <button type="button" id="bulk-add">📁 Add to folder</button>
       <button type="button" id="bulk-remove">Remove from folder</button>
+      <button type="button" id="bulk-send">📨 Send to a friend</button>
       <span class="spacer"></span>
       <button type="button" class="ghost" id="bulk-clear">Clear selection</button>
     </div>
@@ -185,7 +187,13 @@ export async function render(view) {
           await load();
         } catch (e) { toast(e.message, { error: true }); }
       };
-      bar.append(rn, del);
+      const share = h(`<button type="button" class="ghost small-btn">📨 Send folder to a friend</button>`);
+      share.onclick = (e) => {
+        const words = all.filter((v) => v.folders.includes(current.uid));
+        const r = e.currentTarget.getBoundingClientRect();
+        sendMenu(r.left, r.bottom + 4, words, current.name);
+      };
+      bar.append(rn, del, share);
     }
   }
 
@@ -218,6 +226,32 @@ export async function render(view) {
     }
     if (!entries.length) { toast("These words aren't in any folder."); return; }
     showMenu(x, y, items.length === 1 ? items[0].text : `${items.length} words`, entries);
+  }
+
+  /** Pick a friend, then send them copies of these words (as a folder when `folderName` is set). */
+  async function sendMenu(x, y, words, folderName = null) {
+    if (!words.length) { toast("There are no words to send."); return; }
+    let st;
+    try { st = await social.friendsState(); } catch (e) { toast(e.message, { error: true }); return; }
+    if (!st || !st.me.username) {
+      toast("Connect and choose a username first.", { action: { label: "Settings", run: () => (location.hash = "#/settings") } });
+      return;
+    }
+    if (!st.friends.length) {
+      toast("Add a friend first.", { action: { label: "Friends", run: () => (location.hash = "#/friends") } });
+      return;
+    }
+    const what = folderName ? `the folder “${folderName}” (${words.length} words)` : `${words.length} word${words.length === 1 ? "" : "s"}`;
+    showMenu(x, y, `Send ${folderName ? "folder" : `${words.length} word${words.length === 1 ? "" : "s"}`} to…`,
+      st.friends.map((f) => ({
+        label: `@${f.user.username}`,
+        run: async () => {
+          try {
+            await social.sendShare(f.user.id, { folder: folderName, words });
+            toast(`Sent ${what} to ${f.user.username}.`, { action: { label: "Open chat", run: () => (location.hash = `#/chat/${f.user.id}`) } });
+          } catch (e) { toast(e.message, { error: true }); }
+        },
+      })));
   }
 
   // ----- items -----
@@ -359,6 +393,7 @@ export async function render(view) {
   const pickedItems = () => all.filter((v) => selected.has(v.id));
   $("#bulk-add").onclick = (e) => { const r = e.currentTarget.getBoundingClientRect(); folderMenu(r.left, r.bottom + 4, pickedItems(), "add"); };
   $("#bulk-remove").onclick = (e) => { const r = e.currentTarget.getBoundingClientRect(); folderMenu(r.left, r.bottom + 4, pickedItems(), "remove"); };
+  $("#bulk-send").onclick = (e) => { const r = e.currentTarget.getBoundingClientRect(); sendMenu(r.left, r.bottom + 4, pickedItems()); };
   $("#bulk-clear").onclick = () => { selected.clear(); renderAll(); };
 
   let debounce;

@@ -8,6 +8,7 @@ import * as search from "./pages/search.js";
 import * as settingsPage from "./pages/settings.js";
 import * as welcome from "./pages/welcome.js";
 import * as friends from "./pages/friends.js";
+import * as chat from "./pages/chat.js";
 import { startBadge } from "./social.js";
 import { addUploadedVideo, handle } from "./backend.js";
 import { accessToken, drive } from "./drive.js";
@@ -249,6 +250,7 @@ const routes = [
   [/^settings$/, settingsPage, () => ({})],
   [/^welcome$/, welcome, () => ({})],
   [/^friends$/, friends, () => ({})],
+  [/^chat\/([\w-]+)$/, chat, (m) => ({ friendId: m[1] })],
 ];
 let cleanup = null;
 
@@ -264,9 +266,9 @@ async function route() {
   if (!hit) { location.hash = "#/"; return; }
   const [re, mod, params] = hit;
   const key = mod === library ? "library" : mod === vocab ? "vocab" : mod === search ? "search"
-    : mod === settingsPage ? "settings" : mod === friends ? "friends" : "";
+    : mod === settingsPage ? "settings" : mod === friends || mod === chat ? "friends" : "";
   document.querySelectorAll("[data-nav]").forEach((a) => a.classList.toggle("active", a.dataset.nav === key));
-  document.body.classList.toggle("in-player", mod === player);
+  document.body.classList.toggle("in-player", mod === player || mod === chat);
   try {
     cleanup = (await mod.render(view, { ...params(path.match(re)), query: new URLSearchParams(qs || "") })) || null;
   } catch (e) {

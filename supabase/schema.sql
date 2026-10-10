@@ -6,7 +6,8 @@
 -- Privacy model (row-level security):
 --   profiles        anyone signed in can look up a username; only you can change yours
 --   friendships     visible to the two people involved
---   shares          a copy sent to a friend: visible to sender and recipient only
+--   statuses        "what I am studying": visible to you and your friends
+--   messages        text, voice notes and shared words: sender and recipient only
 --   shared folders  visible and editable by their members only
 --   game_invites    visible to host and invitee only
 
@@ -80,29 +81,6 @@ grant execute on function public.accept_friend(uuid) to authenticated;
 drop policy if exists "remove friendship" on public.friendships;
 create policy "remove friendship" on public.friendships
   for delete to authenticated using (auth.uid() in (requester, addressee));
-
--- ---------------------------------------------------------------- shares (send a copy)
--- payload: {"words": [{text, meaning, notes, sentence, episode_title}], "folder": "name" | null}
-create table if not exists public.shares (
-  id          uuid primary key default gen_random_uuid(),
-  sender      uuid not null references public.profiles(id) on delete cascade,
-  recipient   uuid not null references public.profiles(id) on delete cascade,
-  title       text not null default '' check (length(title) <= 200),
-  payload     jsonb not null,
-  created_at  timestamptz not null default now(),
-  check (octet_length(payload::text) < 1000000)
-);
-alter table public.shares enable row level security;
-
-drop policy if exists "see shares sent or received" on public.shares;
-create policy "see shares sent or received" on public.shares
-  for select to authenticated using (auth.uid() in (sender, recipient));
-drop policy if exists "share with a friend" on public.shares;
-create policy "share with a friend" on public.shares
-  for insert to authenticated with check (sender = auth.uid() and public.are_friends(sender, recipient));
-drop policy if exists "dismiss a share" on public.shares;
-create policy "dismiss a share" on public.shares
-  for delete to authenticated using (auth.uid() in (sender, recipient));
 
 -- ---------------------------------------------------------------- shared folders (live, several people)
 create table if not exists public.shared_folders (
@@ -215,7 +193,114 @@ create policy "dismiss invite" on public.game_invites
 do $$
 declare t text;
 begin
-  foreach t in array array['friendships', 'shares', 'game_invites', 'shared_words', 'shared_folder_members'] loop
+  foreach t in array array['friendships', 'game_invites', 'shared_words', 'shared_folder_members'] loop
+    if not exists (select 1 from pg_publication_tables
+                   where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = t) then
+      execute format('alter publication supabase_realtime add table public.%I', t);
+    end if;
+  end loop;
+end $$;
+
+-- ================================================================ v2: status cards, messages, voice notes
+-- (Sharing a word or folder is a message of kind 'share', so the chat is also the inbox.
+--  The earlier shares table was never used and is removed if empty.)
+do $$ begin
+  if to_regclass('public.shares') is not null and not exists (select 1 from public.shares) then
+    if exists (select 1 from pg_publication_tables
+               where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = 'shares') then
+      alter publication supabase_realtime drop table public.shares;
+    end if;
+    drop table public.shares;
+  end if;
+end $$;
+
+-- ---------------------------------------------------------------- "What I am studying" (friends only)
+-- studying: {"kind": "podcast" | "youtube" | "spotify", "title", "subtitle", "image", "url", "feed_url"} or null
+create table if not exists public.statuses (
+  user_id     uuid primary key references public.profiles(id) on delete cascade,
+  studying    jsonb check (studying is null or octet_length(studying::text) < 4000),
+  message     text not null default '' check (length(message) <= 300),
+  updated_at  timestamptz not null default now()
+);
+alter table public.statuses enable row level security;
+drop policy if exists "friends see status" on public.statuses;
+create policy "friends see status" on public.statuses
+  for select to authenticated using (user_id = auth.uid() or public.are_friends(auth.uid(), user_id));
+drop policy if exists "set own status" on public.statuses;
+create policy "set own status" on public.statuses
+  for insert to authenticated with check (user_id = auth.uid());
+drop policy if exists "change own status" on public.statuses;
+create policy "change own status" on public.statuses
+  for update to authenticated using (user_id = auth.uid()) with check (user_id = auth.uid());
+drop trigger if exists statuses_touch on public.statuses;
+create trigger statuses_touch before update on public.statuses
+  for each row execute function public.touch_updated_at();
+
+-- ---------------------------------------------------------------- messages between friends
+-- kind 'text':  body
+-- kind 'voice': payload {"path": "<file in the voice bucket>", "seconds": n}
+-- kind 'share': payload {"folder": "name" | null, "words": [{text, meaning, notes, sentence, episode_title}]}
+create table if not exists public.messages (
+  id          uuid primary key default gen_random_uuid(),
+  sender      uuid not null references public.profiles(id) on delete cascade,
+  recipient   uuid not null references public.profiles(id) on delete cascade,
+  kind        text not null default 'text' check (kind in ('text', 'voice', 'share')),
+  body        text not null default '' check (length(body) <= 4000),
+  payload     jsonb check (payload is null or octet_length(payload::text) < 1000000),
+  created_at  timestamptz not null default now(),
+  read_at     timestamptz
+);
+create index if not exists messages_pair on public.messages
+  (least(sender, recipient), greatest(sender, recipient), created_at desc);
+create index if not exists messages_unread on public.messages (recipient) where read_at is null;
+alter table public.messages enable row level security;
+drop policy if exists "see own messages" on public.messages;
+create policy "see own messages" on public.messages
+  for select to authenticated using (auth.uid() in (sender, recipient));
+drop policy if exists "message a friend" on public.messages;
+create policy "message a friend" on public.messages
+  for insert to authenticated with check (sender = auth.uid() and read_at is null
+                                          and public.are_friends(sender, recipient));
+drop policy if exists "delete own message" on public.messages;
+create policy "delete own message" on public.messages
+  for delete to authenticated using (sender = auth.uid());
+
+-- Marking as read goes through a function so a recipient can change nothing else.
+create or replace function public.mark_read(friend uuid) returns void
+language sql security definer set search_path = public as $$
+  update public.messages set read_at = now()
+  where recipient = auth.uid() and sender = friend and read_at is null;
+$$;
+revoke all on function public.mark_read(uuid) from public, anon;
+grant execute on function public.mark_read(uuid) to authenticated;
+
+-- ---------------------------------------------------------------- voice notes (private file storage)
+-- Files live at voice/<user A>_<user B>/<file>, the two ids in sorted order; only those two
+-- people can read or add files there.
+insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
+values ('voice', 'voice', false, 3145728, array['audio/webm', 'audio/ogg', 'audio/mp4', 'audio/mpeg'])
+on conflict (id) do nothing;
+
+create or replace function public.in_conversation(folder text) returns boolean
+language sql stable as $$
+  select auth.uid()::text in (split_part(folder, '_', 1), split_part(folder, '_', 2));
+$$;
+
+drop policy if exists "voice: read own conversations" on storage.objects;
+create policy "voice: read own conversations" on storage.objects
+  for select to authenticated
+  using (bucket_id = 'voice' and public.in_conversation((storage.foldername(name))[1]));
+drop policy if exists "voice: add to own conversations" on storage.objects;
+create policy "voice: add to own conversations" on storage.objects
+  for insert to authenticated
+  with check (bucket_id = 'voice' and public.in_conversation((storage.foldername(name))[1])
+              and public.are_friends(split_part((storage.foldername(name))[1], '_', 1)::uuid,
+                                     split_part((storage.foldername(name))[1], '_', 2)::uuid));
+
+do $$
+declare t text;
+begin
+  foreach t in array array['messages', 'statuses'] loop
     if not exists (select 1 from pg_publication_tables
                    where pubname = 'supabase_realtime' and schemaname = 'public' and tablename = t) then
       execute format('alter publication supabase_realtime add table public.%I', t);

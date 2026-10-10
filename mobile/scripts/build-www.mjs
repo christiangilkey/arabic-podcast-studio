@@ -27,6 +27,8 @@ const SHARED = [
   "js/pages/vocab.js",
   "js/pages/search.js",
   "js/pages/friends.js",
+  "js/pages/chat.js",
+  "js/components/studycard.js",
 ];
 
 rmSync(out, { recursive: true, force: true });

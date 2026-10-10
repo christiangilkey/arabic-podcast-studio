@@ -179,27 +179,27 @@ export async function removeFriendship(friendshipId) {
 
 // ---------------------------------------------------------------- live updates + badge
 
-/** Call `handler` whenever friend requests, shares or quiz invites change. Returns an unsubscribe. */
+/** Call `handler` whenever friend requests, messages, status cards or quiz invites change. Returns an unsubscribe. */
 export async function onActivity(handler) {
   const user = await currentUser();
   if (!user) return () => {};
   const c = await sb();
   const channel = c.channel(`activity-${user.id}-${Math.random().toString(36).slice(2, 8)}`);
-  for (const table of ["friendships", "shares", "game_invites"]) {
+  for (const table of ["friendships", "messages", "game_invites", "statuses"]) {
     channel.on("postgres_changes", { event: "*", schema: "public", table }, () => handler(table));
   }
   channel.subscribe();
   return () => { c.removeChannel(channel); };
 }
 
-/** Things waiting for you (friend requests now; shares and quiz invites as they arrive). */
+/** Things waiting for you: friend requests, unread messages (incl. shared words), quiz invites. */
 export async function pendingCount() {
   const user = await currentUser();
   if (!user) return 0;
   const c = await sb();
   const counts = await Promise.all([
     c.from("friendships").select("id", { count: "exact", head: true }).eq("addressee", user.id).eq("status", "pending"),
-    c.from("shares").select("id", { count: "exact", head: true }).eq("recipient", user.id),
+    c.from("messages").select("id", { count: "exact", head: true }).eq("recipient", user.id).is("read_at", null),
     c.from("game_invites").select("id", { count: "exact", head: true }).eq("invitee", user.id),
   ]);
   return counts.reduce((n, r) => n + (r.count || 0), 0);
@@ -223,4 +223,191 @@ export function startBadge() {
     if (event === "SIGNED_IN" || event === "SIGNED_OUT" || event === "INITIAL_SESSION") setTimeout(watch, 0);
   })).catch(() => {});
   setInterval(paint, 120000);
+}
+
+// ---------------------------------------------------------------- "What I'm studying" cards
+
+const YOUTUBE_HOSTS = ["www.youtube.com", "youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be"];
+const SPOTIFY_HOST = "open.spotify.com";
+
+function httpsUrl(text) {
+  try {
+    const u = new URL(text.trim());
+    return u.protocol === "https:" ? u : null;
+  } catch {
+    return null;
+  }
+}
+
+/** Only https links (and nothing else) are ever shown or opened from a friend's card. */
+export function safeUrl(text) {
+  const u = typeof text === "string" ? httpsUrl(text) : null;
+  return u ? u.href : "";
+}
+
+/** Spotify's official mini-player address for a track/album/playlist/episode link, or "". */
+export function spotifyEmbedUrl(link) {
+  const u = httpsUrl(link || "");
+  if (!u || u.hostname !== SPOTIFY_HOST) return "";
+  const m = u.pathname.match(/\/(track|album|playlist|episode|show)\/([A-Za-z0-9]+)/);
+  return m ? `https://open.spotify.com/embed/${m[1]}/${m[2]}` : "";
+}
+
+/** Turn a pasted YouTube or Spotify link into a card {kind, url, title, subtitle, image}.
+ * Uses the sites' public link-preview (oEmbed) services: no account or key needed. */
+export async function previewLink(text) {
+  const u = httpsUrl(text || "");
+  if (!u) throw new Error("Paste a link that starts with https://");
+  let kind;
+  let endpoint;
+  if (YOUTUBE_HOSTS.includes(u.hostname)) {
+    kind = "youtube";
+    endpoint = `https://www.youtube.com/oembed?format=json&url=${encodeURIComponent(u.href)}`;
+  } else if (u.hostname === SPOTIFY_HOST) {
+    kind = "spotify";
+    endpoint = `https://open.spotify.com/oembed?url=${encodeURIComponent(u.href)}`;
+  } else {
+    throw new Error("Paste a YouTube or Spotify link.");
+  }
+  let data;
+  try {
+    const res = await fetch(endpoint);
+    if (!res.ok) throw new Error(String(res.status));
+    data = await res.json();
+  } catch {
+    throw new Error(`Couldn't find that on ${kind === "youtube" ? "YouTube" : "Spotify"}. Check the link.`);
+  }
+  return {
+    kind,
+    url: u.href,
+    title: String(data.title || "").slice(0, 200) || (kind === "youtube" ? "YouTube video" : "Spotify"),
+    subtitle: String(data.author_name || (kind === "spotify" ? "Spotify" : "")).slice(0, 120),
+    image: safeUrl(data.thumbnail_url || ""),
+  };
+}
+
+/** My own card: {studying, message}. */
+export async function myStatus() {
+  const c = await sb();
+  const user = await currentUser();
+  if (!user) return null;
+  const { data, error } = await c.from("statuses").select("studying, message").eq("user_id", user.id).maybeSingle();
+  if (error) throw new Error(friendly(error));
+  return data || { studying: null, message: "" };
+}
+
+export async function setStatus({ studying, message }) {
+  const c = await sb();
+  const user = await currentUser();
+  if (!user) throw new Error("Connect first.");
+  const row = { user_id: user.id, studying: studying || null, message: (message || "").trim().slice(0, 300) };
+  const { error } = await c.from("statuses").upsert(row, { onConflict: "user_id" });
+  if (error) throw new Error(friendly(error));
+}
+
+/** Cards of the given friends: Map(user id -> {studying, message, updated_at}). */
+export async function statusesOf(userIds) {
+  const out = new Map();
+  if (!userIds.length) return out;
+  const { data, error } = await (await sb()).from("statuses").select("user_id, studying, message, updated_at").in("user_id", userIds);
+  if (error) throw new Error(friendly(error));
+  for (const r of data) out.set(r.user_id, r);
+  return out;
+}
+
+// ---------------------------------------------------------------- messages, voice notes, shared words
+
+export const VOICE_MAX_SECONDS = 120;
+const conversationFolder = (a, b) => [a, b].sort().join("_");
+
+/** Unread message counts: Map(friend id -> n). */
+export async function unreadCounts() {
+  const user = await currentUser();
+  const out = new Map();
+  if (!user) return out;
+  const { data, error } = await (await sb()).from("messages").select("sender").eq("recipient", user.id).is("read_at", null);
+  if (error) throw new Error(friendly(error));
+  for (const r of data) out.set(r.sender, (out.get(r.sender) || 0) + 1);
+  return out;
+}
+
+/** The latest messages with a friend, oldest first. */
+export async function conversation(friendId, limit = 200) {
+  const c = await sb();
+  const user = await currentUser();
+  if (!user) throw new Error("Connect first.");
+  const { data, error } = await c.from("messages").select("id, sender, recipient, kind, body, payload, created_at, read_at")
+    .or(`and(sender.eq.${user.id},recipient.eq.${friendId}),and(sender.eq.${friendId},recipient.eq.${user.id})`)
+    .order("created_at", { ascending: false }).limit(limit);
+  if (error) throw new Error(friendly(error));
+  return { me: user.id, messages: data.reverse() };
+}
+
+async function insertMessage(friendId, fields) {
+  const c = await sb();
+  const user = await currentUser();
+  if (!user) throw new Error("Connect first.");
+  const { data, error } = await c.from("messages").insert({ sender: user.id, recipient: friendId, ...fields })
+    .select("id, sender, recipient, kind, body, payload, created_at, read_at").single();
+  if (error) {
+    throw new Error(error.code === "42501" ? "You can only message people on your friends list." : friendly(error));
+  }
+  return data;
+}
+
+export function sendText(friendId, text) {
+  const body = text.trim();
+  if (!body) throw new Error("Type a message first.");
+  return insertMessage(friendId, { kind: "text", body: body.slice(0, 4000) });
+}
+
+/** Upload a recorded voice note, then send it as a message. */
+export async function sendVoice(friendId, blob, seconds) {
+  const c = await sb();
+  const user = await currentUser();
+  if (!user) throw new Error("Connect first.");
+  const type = (blob.type || "audio/webm").split(";")[0];
+  const ext = type.includes("ogg") ? "ogg" : type.includes("mp4") ? "m4a" : "webm";
+  const path = `${conversationFolder(user.id, friendId)}/${crypto.randomUUID()}.${ext}`;
+  const { error } = await c.storage.from("voice").upload(path, blob, { contentType: type });
+  if (error) throw new Error(`Couldn't send the voice note: ${friendly(error)}`);
+  return insertMessage(friendId, { kind: "voice", payload: { path, seconds: Math.round(seconds) } });
+}
+
+/** A temporary private link to play a voice note. */
+export async function voiceUrl(path) {
+  const { data, error } = await (await sb()).storage.from("voice").createSignedUrl(path, 3600);
+  if (error) throw new Error(friendly(error));
+  return data.signedUrl;
+}
+
+/** Send copies of vocab words (optionally as a named folder) to a friend. */
+export function sendShare(friendId, { folder = null, words }) {
+  const clean = words.slice(0, 500).map((w) => ({
+    text: String(w.text || "").slice(0, 300), meaning: String(w.meaning || "").slice(0, 2000),
+    notes: String(w.notes || "").slice(0, 4000), sentence: String(w.sentence || "").slice(0, 2000),
+    episode_title: String(w.episode_title || "").slice(0, 300),
+  })).filter((w) => w.text);
+  if (!clean.length) throw new Error("There's nothing to share.");
+  return insertMessage(friendId, { kind: "share", payload: { folder: folder ? String(folder).slice(0, 80) : null, words: clean } });
+}
+
+export async function markRead(friendId) {
+  await (await sb()).rpc("mark_read", { friend: friendId });
+}
+
+export async function deleteMessage(id) {
+  const { error } = await (await sb()).from("messages").delete().eq("id", id);
+  if (error) throw new Error(friendly(error));
+}
+
+/** Call `handler(message)` for each new message to or from me. Returns an unsubscribe. */
+export async function onMessage(handler) {
+  const user = await currentUser();
+  if (!user) return () => {};
+  const c = await sb();
+  const channel = c.channel(`messages-${user.id}-${Math.random().toString(36).slice(2, 8)}`)
+    .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages" }, (e) => handler(e.new))
+    .subscribe();
+  return () => { c.removeChannel(channel); };
 }
