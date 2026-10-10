@@ -6,6 +6,7 @@ default browser instead and shuts down once the last browser tab has been closed
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import socket
@@ -60,6 +61,34 @@ class Server:
         self.thread.join(timeout=5)
 
 
+class BrowserApi:
+    """The only thing exposed to pages shown in the Web Browser window: importing the page
+    being viewed. (Websites can reach this object, so it must never offer more than that.)"""
+
+    def __init__(self) -> None:
+        self._window: Any = None
+
+    def import_page(self) -> dict[str, Any]:
+        from . import pages, sync
+
+        try:
+            script = ("(function(){" + pages.extractor_source()
+                      + "\nreturn JSON.stringify(extractArticle(document, location.href));})()")
+            article = json.loads(self._window.evaluate_js(script) or "null")
+            if not article:
+                return {"ok": False, "error": "This page couldn't be read."}
+            ep = pages.save_page(article.get("url") or "", article.get("title") or "", article.get("blocks") or [],
+                                 article.get("image"), article.get("site"))
+        except pages.PageError as exc:
+            return {"ok": False, "error": str(exc)}
+        except Exception as exc:  # never let a website's oddities crash the bridge
+            log.exception("Importing a page from the browser window failed")
+            return {"ok": False, "error": f"Couldn't import this page ({exc.__class__.__name__})."}
+        events.publish("feeds", {"refreshed": True})
+        sync.request()
+        return {"ok": True, "title": ep["title"], "words": ep["words"]}
+
+
 class JsApi:
     """Exposed to the page as window.pywebview.api (native save dialogs for exports).
 
@@ -70,6 +99,31 @@ class JsApi:
     def __init__(self, server: Server) -> None:
         self._server = server
         self._window: Any = None
+
+    def open_browser(self, url: str = "") -> dict[str, Any]:
+        """Open a web browser window with an "Import Page" button (see web/js/browser-toolbar.js)."""
+        import webview
+
+        from . import pages
+
+        try:
+            toolbar = (paths.web_dir() / "js" / "browser-toolbar.js").read_text(encoding="utf-8")
+            api = BrowserApi()
+            window = webview.create_window(f"Web Browser · {APP_NAME}", pages.browser_start(url), js_api=api,
+                                           width=1200, height=820, min_size=(640, 480), text_select=True)
+            api._window = window
+
+            def add_toolbar() -> None:
+                try:
+                    window.evaluate_js(toolbar)
+                except Exception as exc:  # e.g. the window closed while a page was loading
+                    log.debug("Couldn't add the browser toolbar: %s", exc)
+
+            window.events.loaded += add_toolbar
+        except Exception as exc:
+            log.exception("Couldn't open the browser window")
+            return {"ok": False, "error": f"Couldn't open the browser window ({exc})."}
+        return {"ok": True}
 
     def save_file(self, url: str, filename: str) -> dict[str, Any]:
         import webview

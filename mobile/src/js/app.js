@@ -12,7 +12,7 @@ import * as chat from "./pages/chat.js";
 import { startBadge } from "./social.js";
 import { addUploadedVideo, handle } from "./backend.js";
 import { accessToken, drive } from "./drive.js";
-import { App, Filesystem, GoogleDriveAuth, Share, isNative } from "./native.js";
+import { App, Filesystem, GoogleDriveAuth, NativeHttp, Share, isNative } from "./native.js";
 import { kv, lib, loadLibrary, loadSettings, saveSettingsPatch, settings } from "./store.js";
 import { audioCopy, driveFileId, onSync, syncNow } from "./sync.js";
 import { newUid, toSrt, toTxt, toVtt, vocabAnki, vocabCsv } from "./shared-logic.js";
@@ -108,6 +108,54 @@ export async function googleIdToken() {
   const hashed = Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
   const r = await GoogleDriveAuth.getIdToken({ serverClientId: WEB_CLIENT_ID, nonce: hashed });
   return { token: r.idToken, nonce };
+}
+
+// ---------- web pages ----------
+/** Download a web page for "Add a webpage": {url, html}. */
+export async function fetchPage(url) {
+  let address = String(url || "").trim();
+  if (address && !/^[a-z][a-z0-9+.-]*:\/\//i.test(address)) address = `https://${address}`;
+  if (!/^https?:\/\/[^\s/]+/i.test(address)) throw new Error("Paste a web address, like https://example.com/article");
+  if (!isNative) throw new Error("Importing pages works in the installed Android app.");
+  let res;
+  try {
+    res = await NativeHttp.get({ url: address, responseType: "text", connectTimeout: 15000, readTimeout: 30000,
+      headers: { "User-Agent": "Mozilla/5.0 (Linux; Android 14) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0 Mobile Safari/537.36",
+                 "Accept-Language": "ar,en;q=0.8" } });
+  } catch (e) {
+    throw new Error("Couldn't reach that site. Check the address and your connection.");
+  }
+  if (res.status >= 400) throw new Error(`The site answered with an error (${res.status}). Try “Open Web Browser” and use Import Page there.`);
+  return { url: res.url || address, html: typeof res.data === "string" ? res.data : String(res.data || "") };
+}
+
+let browserListening = false;
+/** Open the in-app web browser (native screen with an "Import Page" button). */
+export async function openBrowser(url = "") {
+  if (!isNative) {
+    window.open(/^https?:/i.test(url) ? url : "https://www.google.com", "_blank", "noopener");
+    toast("Copy the address of the page you want and paste it under “Add a webpage”.");
+    return;
+  }
+  const { extractorSource, saveArticle } = await import("./pageimport.js");
+  if (!browserListening) {
+    browserListening = true;
+    GoogleDriveAuth.addListener("pageImport", async ({ result }) => {
+      let message;
+      try {
+        // The native side hands over the page's own answer, which is JSON inside a JSON string.
+        let article = JSON.parse(result || "null");
+        if (typeof article === "string") article = JSON.parse(article);
+        const ep = await saveArticle(article);
+        message = `Imported “${ep.title}” (${ep.words} words). It's in My webpages.`;
+        emit("feeds", { refreshed: true });
+      } catch (e) {
+        message = e.message || "Couldn't import this page.";
+      }
+      GoogleDriveAuth.browserToast({ text: message }).catch(() => {});
+    });
+  }
+  await GoogleDriveAuth.openBrowser({ url, extractor: await extractorSource() });
 }
 
 // ---------- own videos ----------

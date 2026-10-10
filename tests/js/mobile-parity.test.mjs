@@ -30,3 +30,7 @@ test("vocab exports match Python", () => {
   assert.equal(js.vocabAnki(vocab), py.anki);
   assert.equal(js.vocabCsv(vocab), py.csv);
 });
+test("episode ids match Python (a page imported on phone and desktop is the same item)", async () => {
+  // app.ids.episode_uid(app.ids.feed_uid("local:pages"), "https://example.com/a")
+  assert.equal(await js.episodeUid(await js.feedUid("local:pages"), "https://example.com/a"), "e2a8f8c3f5937cf862254");
+});

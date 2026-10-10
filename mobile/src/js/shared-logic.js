@@ -10,6 +10,10 @@ async function sha1Hex(text) {
 export async function feedUid(url) {
   return "f" + (await sha1Hex(url.trim().toLowerCase())).slice(0, 20);
 }
+/** Same id the desktop gives an episode (app/ids.py): two devices importing the same page agree. */
+export async function episodeUid(feedUidValue, guid) {
+  return "e" + (await sha1Hex(`${feedUidValue}\0${guid}`)).slice(0, 20);
+}
 export function newUid() {
   const bytes = crypto.getRandomValues(new Uint8Array(10));
   return "v" + [...bytes].map((b) => b.toString(16).padStart(2, "0")).join("");

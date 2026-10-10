@@ -1,6 +1,7 @@
 // Library: feeds sidebar, episode list with live status, multi-select transcription.
 
-import { api, esc, h, fmtDate, fmtDuration, on, toast, requestNotifications, uploadVideo } from "../app.js";
+import { api, esc, h, fmtDate, fmtDuration, on, toast, requestNotifications, uploadVideo, openBrowser } from "../app.js";
+import { importUrl } from "../pageimport.js";
 
 const FILTERS = [
   ["", "All"],
@@ -14,6 +15,8 @@ const PAGE = 100;
 
 export const isVideo = (ep) => (ep.audio_type || "").startsWith("video/");
 export const isLocalFeed = (url) => (url || "").startsWith("local:");
+export const isPage = (ep) => (ep.audio_type || "") === "text/html";
+const PAGES_FEED = "local:pages";
 
 export function statusInfo(ep) {
   const p = Math.round(ep.progress || 0);
@@ -36,6 +39,17 @@ export async function render(view, { feedId, query }) {
   view.append(h(`
     <div class="library">
       <aside class="sidebar">
+        <div class="add-page">
+          <form class="add-feed" id="add-page">
+            <label for="page-url"><strong>Add a webpage</strong></label>
+            <div class="row">
+              <input id="page-url" type="text" inputmode="url" placeholder="Paste website URL" required autocomplete="off">
+              <button class="primary" type="submit">Import</button>
+            </div>
+          </form>
+          <button type="button" id="open-browser" class="browser-btn" title="Browse the web inside the app and import any page you're reading">
+            <span class="ico">🌐</span><span>Open Web<br>Browser</span></button>
+        </div>
         <form class="add-feed" id="add-feed">
           <label for="feed-url"><strong>Add a podcast</strong></label>
           <div class="row">
@@ -80,7 +94,7 @@ export async function render(view, { feedId, query }) {
     const all = h(`<a class="feed-item${feedId ? "" : " active"}" href="#/"><div class="ph all">🎧</div><div><div class="t">All episodes</div></div></a>`);
     list.append(all);
     for (const f of feeds) {
-      const img = isLocalFeed(f.url) ? `<div class="ph all">🎬</div>` : f.image ? `<img src="${esc(f.image)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : `<div class="ph"></div>`;
+      const img = f.url === PAGES_FEED ? `<div class="ph all">🌐</div>` : isLocalFeed(f.url) ? `<div class="ph all">🎬</div>` : f.image ? `<img src="${esc(f.image)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : `<div class="ph"></div>`;
       list.append(h(`<a class="feed-item${f.id === feedId ? " active" : ""}" href="#/feed/${f.id}">
         ${img}<div style="min-width:0"><div class="t">${esc(f.title)}</div>
         <div class="small muted">${f.done_count || 0}/${f.episode_count} transcribed${f.last_error ? " · ⚠" : ""}</div></div></a>`));
@@ -100,6 +114,12 @@ export async function render(view, { feedId, query }) {
     }
     const f = feeds.find((x) => x.id === feedId);
     if (!f) { location.hash = "#/"; return; }
+    if (f.url === PAGES_FEED) {
+      head.append(h(`<div class="lib-head"><div class="ph video-ph">🌐</div><div class="meta"><h1>${esc(f.title)}</h1>
+        <div class="desc small">Web pages you imported. Open one to read it with every word clickable. Add more with
+        “Add a webpage”, or browse with “Open Web Browser” and press Import Page.</div></div></div>`));
+      return;
+    }
     if (isLocalFeed(f.url)) {
       head.append(h(`<div class="lib-head"><div class="ph video-ph">🎬</div><div class="meta"><h1>${esc(f.title)}</h1>
         <div class="desc small">Video files you added yourself. They're transcribed on your computer and stored in your
@@ -194,7 +214,7 @@ export async function render(view, { feedId, query }) {
     };
     switch (ep.status) {
       case "done":
-        btn(isVideo(ep) ? "Watch" : "Open", "primary", () => (location.hash = `#/episode/${ep.id}`));
+        btn(isVideo(ep) ? "Watch" : isPage(ep) ? "Read" : "Open", "primary", () => (location.hash = `#/episode/${ep.id}`));
         break;
       case "failed":
         btn("Retry", "", () => transcribe([ep.id]));
@@ -210,7 +230,8 @@ export async function render(view, { feedId, query }) {
     if (isVideo(ep) && ep.status !== "done") btn("Watch", "ghost", () => (location.hash = `#/episode/${ep.id}`));
     if (isLocalFeed(ep.feed_url)) {
       btn("Delete", "ghost danger", async () => {
-        if (!confirm(`Delete “${ep.title}”? The video and its transcript are removed from this device and from your Google Drive. Saved vocab is kept.`)) return;
+        if (!confirm(isPage(ep) ? `Delete “${ep.title}” from your webpages? Saved vocab is kept.`
+          : `Delete “${ep.title}”? The video and its transcript are removed from this device and from your Google Drive. Saved vocab is kept.`)) return;
         try {
           await api(`/episodes/${ep.id}`, { method: "DELETE" });
           row.remove();
@@ -320,6 +341,29 @@ export async function render(view, { feedId, query }) {
     updateSelection();
   };
   $("#more").onclick = () => loadEpisodes(true);
+  $("#add-page").onsubmit = async (e) => {
+    e.preventDefault();
+    const input = $("#page-url");
+    const btn = e.target.querySelector("button");
+    btn.disabled = true;
+    btn.textContent = "Importing…";
+    try {
+      const ep = await importUrl(input.value);
+      input.value = "";
+      toast(`Imported “${ep.title}”.`, { action: { label: "Read", run: () => (location.hash = `#/episode/${ep.id}`) } });
+      location.hash = `#/feed/${ep.feed_id}`;
+      scheduleReload();
+    } catch (err) {
+      toast(err.message, { error: true });
+    } finally {
+      btn.disabled = false;
+      btn.textContent = "Import";
+    }
+  };
+  $("#open-browser").onclick = () => {
+    const typed = $("#page-url").value.trim();
+    openBrowser(typed).catch((err) => toast(err.message, { error: true }));
+  };
   $("#add-video").onclick = () => $("#video-file").click();
   $("#video-file").onchange = async (e) => {
     const file = e.target.files[0];

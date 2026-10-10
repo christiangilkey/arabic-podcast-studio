@@ -9,6 +9,7 @@ import { esc } from "../app.js";
  *   fetch: (ctx: object, refresh?: boolean) => Promise<object>,
  *   onPlayWord: () => void, onPlaySentence: () => void, onPlayFrom: () => void,
  *   onSave: (def: object|null) => Promise<void>, onSettings: () => void,
+ *   noAudio?: boolean,   // true for imported web pages: hides the play buttons
  * }} actions
  */
 export function createWordBubble(host, actions) {
@@ -91,9 +92,9 @@ export function createWordBubble(host, actions) {
       </div>
       <div class="wb-body">${body}</div>
       <div class="wb-actions">
-        <button type="button" data-act="word" title="Play this word again">🔊 Word</button>
+        ${actions.noAudio ? "" : `<button type="button" data-act="word" title="Play this word again">🔊 Word</button>
         <button type="button" data-act="sentence" title="Play the whole sentence">🔊 Sentence</button>
-        <button type="button" data-act="from" title="Continue playing from here">▶ Continue</button>
+        <button type="button" data-act="from" title="Continue playing from here">▶ Continue</button>`}
         <button type="button" class="${saved ? "" : "primary"}" data-act="save" ${saved ? "disabled" : ""}>${saved ? "✓ Saved" : "★ Save"}</button>
         ${state === "ready" ? `<button type="button" class="ghost icon" data-act="refresh" title="Ask again">↻</button>` : ""}
       </div>`;

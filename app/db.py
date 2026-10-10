@@ -76,6 +76,7 @@ CREATE TABLE IF NOT EXISTS segments (
     end        REAL NOT NULL,
     text       TEXT NOT NULL,
     norm       TEXT NOT NULL,
+    kind       TEXT,           -- imported web pages: h1 | h2 | h3 | p | li | q
     PRIMARY KEY (episode_id, idx)
 ) WITHOUT ROWID;
 
@@ -177,6 +178,7 @@ _SYNC_COLUMNS = {
                  ("sync_audio_path", "TEXT"), ("deleted", "INTEGER NOT NULL DEFAULT 0")],
     "vocab": [("uid", "TEXT"), ("updated_at", "REAL"), ("deleted", "INTEGER NOT NULL DEFAULT 0"),
               ("episode_uid", "TEXT"), ("folders", "TEXT NOT NULL DEFAULT '[]'")],
+    "segments": [("kind", "TEXT")],
 }
 
 # updated_at is bumped automatically whenever a synced field changes locally. Sync writes

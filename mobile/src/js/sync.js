@@ -109,6 +109,7 @@ async function doSync() {
   publish({ state: "syncing", error: null });
   try {
     let files = Object.fromEntries((await drive.list()).map((f) => [f.name, f]));
+    await uploadPendingTranscripts(files);
     for (let attempt = 0; attempt < 3; attempt++) {
       const meta = files[LIBRARY];
       const remote = meta ? await gunzipJson(await drive.download(meta.id)) : null;
@@ -131,6 +132,26 @@ async function doSync() {
     publish({ state: "error", error: e.message || String(e) });
   }
   return syncState;
+}
+
+/** Upload the text of web pages imported on this phone (before the library mentions them). */
+async function uploadPendingTranscripts(files) {
+  const pending = (await kv.get("pending_transcripts")) || [];
+  if (!pending.length) return;
+  const left = [];
+  for (const uid of pending) {
+    const payload = await transcripts.get(uid);
+    const ep = lib.episodes.find((e) => e.uid === uid);
+    if (!payload || !ep || ep.deleted) continue;
+    const name = `t_${uid}.json.gz`;
+    try {
+      files[name] = await drive.upload(name, await gzipJson(payload), "application/gzip", files[name] ? files[name].id : null);
+    } catch (e) {
+      console.warn("Page upload failed", uid, e);
+      left.push(uid);
+    }
+  }
+  await kv.set("pending_transcripts", left);
 }
 
 /** Free phone storage held by videos deleted on any device. */

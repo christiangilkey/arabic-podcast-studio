@@ -11,6 +11,7 @@ import { statusInfo, isVideo } from "./library.js";
 import { createWordBubble } from "../components/wordbubble.js";
 import { getDefinition } from "../define-service.js";
 import { markWord } from "../definer.js";
+import * as reader from "./reader.js";
 
 const SPEEDS = [0.5, 0.6, 0.7, 0.75, 0.8, 0.85, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2];
 const LONG_PRESS_MS = 550;
@@ -84,6 +85,7 @@ function renderPending(view, ep) {
 export async function render(view, { id, query }) {
   const data = await api(`/episodes/${id}/transcript`);
   const ep = data.episode;
+  if (reader.isPage(ep) && data.words.text.length) return reader.render(view, { id, data });
   if (ep.status !== "done" || !data.words.start.length) return renderPending(view, ep);
 
   const W = data.words;

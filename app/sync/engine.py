@@ -235,11 +235,14 @@ def _purge_feed_episodes(conn: Any, feed_id: int) -> None:
 def transcript_payload(episode_id: int) -> dict[str, Any]:
     with db.session() as conn:
         ep = conn.execute("SELECT transcribed_at, model FROM episodes WHERE id = ?", (episode_id,)).fetchone()
-        segs = conn.execute("SELECT start, end, text FROM segments WHERE episode_id = ? ORDER BY idx",
+        segs = conn.execute("SELECT start, end, text, kind FROM segments WHERE episode_id = ? ORDER BY idx",
                             (episode_id,)).fetchall()
         words = conn.execute("SELECT start, end, text, seg_idx FROM words WHERE episode_id = ? ORDER BY idx",
                              (episode_id,)).fetchall()
+    # Imported web pages also record each block's type (heading, paragraph, ...).
+    kinds = {"kinds": [s["kind"] for s in segs]} if any(s["kind"] for s in segs) else {}
     return {
+        **kinds,
         "format": FORMAT_VERSION, "rev": ep["transcribed_at"], "model": ep["model"],
         "segments": [[round(s["start"], 3), round(s["end"], 3), s["text"]] for s in segs],
         "words": {"start": [round(w["start"], 3) for w in words], "end": [round(w["end"], 3) for w in words],
@@ -254,10 +257,11 @@ def store_transcript(episode_id: int, payload: dict[str, Any]) -> None:
         conn.execute("DELETE FROM words WHERE episode_id = ?", (episode_id,))
         conn.execute("DELETE FROM segments WHERE episode_id = ?", (episode_id,))
         conn.execute("DELETE FROM segments_fts WHERE episode_id = ?", (episode_id,))
+        kinds = payload.get("kinds") or []
         for idx, (start, end, text) in enumerate(payload["segments"]):
             norm = arabic.normalize(text)
-            conn.execute("INSERT INTO segments(episode_id, idx, start, end, text, norm) VALUES(?,?,?,?,?,?)",
-                         (episode_id, idx, start, end, text, norm))
+            conn.execute("INSERT INTO segments(episode_id, idx, start, end, text, norm, kind) VALUES(?,?,?,?,?,?,?)",
+                         (episode_id, idx, start, end, text, norm, kinds[idx] if idx < len(kinds) else None))
             conn.execute("INSERT INTO segments_fts(norm, episode_id, seg_idx) VALUES(?,?,?)", (norm, episode_id, idx))
         conn.executemany(
             "INSERT INTO words(episode_id, idx, seg_idx, start, end, text) VALUES(?,?,?,?,?,?)",

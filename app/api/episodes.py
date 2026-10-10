@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import FileResponse, PlainTextResponse, RedirectResponse, Response, StreamingResponse
 from pydantic import BaseModel
 
-from .. import db, exporters, jobs, sync, videos
+from .. import db, events, exporters, jobs, pages, sync, videos
 
 router = APIRouter(tags=["episodes"])
 
@@ -98,6 +98,34 @@ async def upload_video(request: Request, filename: str, title: str | None = None
     return ep
 
 
+class PageIn(BaseModel):
+    url: str
+    title: str = ""
+    blocks: list[dict[str, Any]]
+    image: str | None = None
+    site: str | None = None
+
+
+@router.get("/web/fetch")
+def fetch_page(url: str) -> dict[str, str]:
+    """Download a web page for "Add a webpage" (the text is extracted in the app's own page)."""
+    try:
+        return pages.fetch_html(url)
+    except pages.PageError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+@router.post("/pages")
+def import_page(body: PageIn) -> dict[str, Any]:
+    try:
+        ep = pages.save_page(body.url, body.title, body.blocks, body.image, body.site)
+    except pages.PageError as exc:
+        raise HTTPException(400, str(exc)) from exc
+    events.publish("feeds", {"refreshed": True})
+    sync.request()
+    return ep
+
+
 @router.delete("/episodes/{episode_id}")
 def delete_episode(episode_id: int) -> dict[str, bool]:
     ep = _episode(episode_id)
@@ -121,7 +149,7 @@ def cancel(episode_id: int) -> dict[str, bool]:
 def transcript(episode_id: int) -> dict[str, Any]:
     ep = _episode(episode_id)
     with db.session() as conn:
-        segs = conn.execute("SELECT idx, start, end, text FROM segments WHERE episode_id = ? ORDER BY idx",
+        segs = conn.execute("SELECT idx, start, end, text, kind FROM segments WHERE episode_id = ? ORDER BY idx",
                             (episode_id,)).fetchall()
         words = conn.execute("SELECT start, end, text, seg_idx FROM words WHERE episode_id = ? ORDER BY idx",
                              (episode_id,)).fetchall()

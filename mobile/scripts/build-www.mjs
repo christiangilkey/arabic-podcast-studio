@@ -28,6 +28,9 @@ const SHARED = [
   "js/pages/search.js",
   "js/pages/friends.js",
   "js/pages/chat.js",
+  "js/pages/reader.js",
+  "js/extract.js",
+  "js/pageimport.js",
   "js/components/studycard.js",
 ];
 

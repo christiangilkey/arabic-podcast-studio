@@ -130,6 +130,38 @@ public class GoogleDriveAuthPlugin extends Plugin {
             });
     }
 
+    /**
+     * Opens the in-app web browser. When the user presses "Import Page" there, the page's text
+     * (extracted by the script passed in as "extractor") is sent to JavaScript as a "pageImport" event.
+     */
+    @PluginMethod
+    public void openBrowser(PluginCall call) {
+        String url = call.getString("url", "");
+        String extractor = call.getString("extractor", "");
+        getActivity().runOnUiThread(() -> {
+            try {
+                InAppBrowser.open(getActivity(), url, extractor, json -> {
+                    android.widget.Toast.makeText(getContext(), "Importing page…", android.widget.Toast.LENGTH_SHORT).show();
+                    JSObject event = new JSObject();
+                    event.put("result", json);
+                    notifyListeners("pageImport", event);
+                });
+                call.resolve();
+            } catch (Exception e) {
+                call.reject("Couldn't open the browser: " + e.getMessage(), e);
+            }
+        });
+    }
+
+    /** Shows a short message on top of the in-app browser (e.g. "Imported ..."). */
+    @PluginMethod
+    public void browserToast(PluginCall call) {
+        String text = call.getString("text", "");
+        getActivity().runOnUiThread(() ->
+            android.widget.Toast.makeText(getContext(), text, android.widget.Toast.LENGTH_LONG).show());
+        call.resolve();
+    }
+
     /** Hands the current access token to the video streamer (see DriveMediaWebViewClient). */
     @PluginMethod
     public void setMediaToken(PluginCall call) {

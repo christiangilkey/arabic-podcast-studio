@@ -136,6 +136,24 @@ export async function googleIdToken() {
   return { token: r.token };
 }
 
+/** Download a web page for "Add a webpage": {url, html}. The desktop's server fetches it. */
+export async function fetchPage(url) {
+  return api(`/web/fetch?url=${encodeURIComponent(url)}`);
+}
+
+/** Open the in-app web browser (a second window with an "Import Page" button). */
+export async function openBrowser(url = "") {
+  const bridge = window.pywebview && window.pywebview.api;
+  if (bridge && bridge.open_browser) {
+    const r = await bridge.open_browser(url);
+    if (r && r.error) throw new Error(r.error);
+    return;
+  }
+  // Running in an ordinary browser (development mode): there is no second window to control.
+  window.open(url && /^https?:/i.test(url) ? url : "https://www.google.com", "_blank", "noopener");
+  toast("Copy the address of the page you want and paste it under “Add a webpage”.");
+}
+
 /** Add one of the user's own video files. Resolves to the new episode. */
 export function uploadVideo(file, onProgress) {
   return new Promise((resolve, reject) => {

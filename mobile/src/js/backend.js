@@ -2,9 +2,9 @@
 // shared screens make (library, player, vocab, search) from on-phone storage.
 // Ids are the global uids, so links work the same everywhere.
 
-import { audio, lib, now, saveLibrary, transcripts } from "./store.js";
+import { audio, kv, lib, now, saveLibrary, transcripts } from "./store.js";
 import { fetchTranscript, requestSync, syncNow, syncState } from "./sync.js";
-import { feedUid, findSpans, newUid, normalize, normalizeUrl } from "./shared-logic.js";
+import { episodeUid, feedUid, findSpans, newUid, normalize, normalizeUrl } from "./shared-logic.js";
 import { settings } from "./store.js";
 
 export class ApiError extends Error {}
@@ -15,6 +15,70 @@ const episodeOf = (uid) => lib.episodes.find((e) => e.uid === uid && !e.deleted)
 const liveEpisodes = () => lib.episodes.filter((e) => !e.deleted);
 
 export const LOCAL_FEED_URL = "local:videos";
+const PAGES_FEED_URL = "local:pages";
+const PAGE_KINDS = ["h1", "h2", "h3", "p", "li", "q"];
+const MAX_PAGE_WORDS = 30000;
+
+function cleanPageUrl(text) {
+  let url = String(text || "").trim();
+  if (/^(javascript|data|file|vbscript|about|blob|chrome|edge):/i.test(url)) url = "";
+  if (url && !/^[a-z][a-z0-9+.-]*:\/\//i.test(url)) url = `https://${url}`;
+  let u;
+  try { u = new URL(url); } catch { u = null; }
+  if (!u || !["http:", "https:"].includes(u.protocol) || !u.hostname) {
+    throw new ApiError("Paste a web address, like https://example.com/article");
+  }
+  return url;
+}
+
+/** Store an imported web page (same layout as the desktop's app/pages.py): the page's text is
+ * its "transcript", one segment per block, word "times" are just positions. */
+async function savePage(body) {
+  const url = cleanPageUrl(body.url);
+  const segments = [];
+  const kinds = [];
+  const words = { start: [], end: [], text: [], seg: [] };
+  for (const b of body.blocks || []) {
+    let tokens = String(b.text || "").split(/\s+/).filter(Boolean);
+    if (words.text.length + tokens.length > MAX_PAGE_WORDS) tokens = tokens.slice(0, MAX_PAGE_WORDS - words.text.length);
+    if (!tokens.length) continue;
+    const first = words.text.length;
+    tokens.forEach((t, i) => { words.start.push(first + i); words.end.push(first + i + 1); words.text.push(t); words.seg.push(segments.length); });
+    segments.push([first, first + tokens.length, tokens.join(" ")]);
+    kinds.push(PAGE_KINDS.includes(b.kind) ? b.kind : "p");
+  }
+  if (!segments.length) throw new ApiError("No readable text was found on that page.");
+  const t = now();
+  const fuid = await feedUid(PAGES_FEED_URL);
+  let feed = feedOf(fuid);
+  if (!feed) {
+    feed = { uid: fuid, url: PAGES_FEED_URL, title: "My webpages", description: "Web pages you imported to read with clickable words.",
+             image: null, link: null, auto_transcribe: 0, deleted: 0, created_at: t, updated_at: t };
+    lib.feeds.push(feed);
+  } else if (feed.deleted) {
+    Object.assign(feed, { deleted: 0, updated_at: t });
+  }
+  const host = (() => { try { return new URL(url).hostname.replace(/^www\./, ""); } catch { return ""; } })();
+  const uid = await episodeUid(fuid, url);
+  const title = String(body.title || "").replace(/\s+/g, " ").trim().slice(0, 300) || host || "Web page";
+  const image = typeof body.image === "string" && body.image.startsWith("https://") ? body.image : null;
+  const fields = { title, description: String(body.site || host).slice(0, 200), image, audio_url: url, audio_type: "text/html",
+                   transcript_rev: t, model: "webpage", deleted: 0, updated_at: t };
+  let ep = lib.episodes.find((e) => e.uid === uid);
+  if (ep) Object.assign(ep, fields);
+  else {
+    ep = { uid, feed_uid: fuid, guid: url, published: t, duration: null, transcribe_requested_at: null, remote_audio: 0,
+           created_at: t, ...fields };
+    lib.episodes.push(ep);
+  }
+  await transcripts.put(uid, { format: 1, rev: t, model: "webpage", kinds, segments, words });
+  // The text has to reach Drive too, so the computer and other devices get the page.
+  const pending = new Set((await kv.get("pending_transcripts")) || []);
+  pending.add(uid);
+  await kv.set("pending_transcripts", [...pending]);
+  changed();
+  return { ...episodeOut(ep), words: words.text.length };
+}
 
 /** Record a video this phone just uploaded to Drive; the computer transcribes it on its next sync. */
 export async function addUploadedVideo({ uid, title, driveName, mime, duration }) {
@@ -98,7 +162,7 @@ const routes = [
   }],
   ["DELETE", /^\/feeds\/([\w]+)$/, async (m) => {
     const f = feedOf(m[1]);
-    if (f && f.url === LOCAL_FEED_URL) throw new ApiError("Delete videos one by one; “My videos” itself can't be removed.");
+    if (f && f.url.startsWith("local:")) throw new ApiError("Delete its items one by one; this built-in list can't be removed.");
     if (f) {
       f.deleted = 1;
       f.updated_at = now();
@@ -153,17 +217,19 @@ const routes = [
     const e = episodeOf(m[1]);
     if (!e) throw new ApiError("Episode not found.");
     const t = e.transcript_rev ? await loadTranscript(e.uid) : null;
-    const segments = t ? t.segments.map(([start, end, text], idx) => ({ idx, start, end, text })) : [];
+    const kinds = (t && t.kinds) || [];
+    const segments = t ? t.segments.map(([start, end, text], idx) => ({ idx, start, end, text, kind: kinds[idx] || null })) : [];
     const words = t ? t.words : { start: [], end: [], text: [], seg: [] };
     const ep = episodeOut(e);
     if (e.transcript_rev && !t) ep.status = "new";
     return { episode: ep, segments, words };
   }],
+  ["POST", /^\/pages$/, (m, q, body) => savePage(body)],
   ["DELETE", /^\/episodes\/([\w]+)$/, async (m) => {
     const e = episodeOf(m[1]);
     if (!e) return { ok: true };
     const f = feedOf(e.feed_uid);
-    if (!f || f.url !== LOCAL_FEED_URL) throw new ApiError("Podcast episodes can't be deleted; remove the podcast instead.");
+    if (!f || !f.url.startsWith("local:")) throw new ApiError("Podcast episodes can't be deleted; remove the podcast instead.");
     // A tombstone: every device removes it, and the computer frees the Drive space.
     Object.assign(e, { deleted: 1, transcribe_requested_at: null, updated_at: now() });
     await transcripts.delete(e.uid).catch(() => {});
