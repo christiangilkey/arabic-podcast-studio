@@ -229,6 +229,18 @@ export function startBadge() {
 
 const YOUTUBE_HOSTS = ["www.youtube.com", "youtube.com", "m.youtube.com", "music.youtube.com", "youtu.be"];
 const SPOTIFY_HOST = "open.spotify.com";
+const APPLE_HOST = "music.apple.com";
+const IMDB_HOSTS = ["www.imdb.com", "imdb.com", "m.imdb.com"];
+export const MAX_STUDY_ITEMS = 3;
+
+/** The kinds of links a "What I'm studying" bar accepts (shown in the editor's help). */
+export const LINK_TYPES = [
+  ["▶ YouTube", "a video or a YouTube Music song", "https://www.youtube.com/watch?v=…  or  https://youtu.be/…"],
+  ["♫ Spotify", "a song, album, playlist or podcast episode (Share → Copy link)", "https://open.spotify.com/track/…"],
+  ["♪ Apple Music", "a song, album or playlist (Share → Copy Link)", "https://music.apple.com/…/album/…"],
+  ["🎬 IMDb", "a film, series or person page", "https://www.imdb.com/title/tt…"],
+  ["🎧 Podcast episode", "any episode from your own library: use the 🎧 button on the bar", ""],
+];
 
 function httpsUrl(text) {
   try {
@@ -253,13 +265,65 @@ export function spotifyEmbedUrl(link) {
   return m ? `https://open.spotify.com/embed/${m[1]}/${m[2]}` : "";
 }
 
-/** Turn a pasted YouTube or Spotify link into a card {kind, url, title, subtitle, image}.
- * Uses the sites' public link-preview (oEmbed) services: no account or key needed. */
+/** Apple Music's official mini-player address for a song/album/playlist link, or "". */
+export function appleEmbedUrl(link) {
+  const u = httpsUrl(link || "");
+  if (!u || u.hostname !== APPLE_HOST || !/\/(album|song|playlist)\//.test(u.pathname)) return "";
+  return `https://embed.music.apple.com${u.pathname}${u.searchParams.get("i") ? `?i=${encodeURIComponent(u.searchParams.get("i"))}` : ""}`;
+}
+
+async function getJson(url) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(String(res.status));
+  return res.json();
+}
+
+async function previewApple(u) {
+  const country = (u.pathname.match(/^\/([a-z]{2})\//) || [])[1] || "us";
+  const id = u.searchParams.get("i") || (u.pathname.match(/\/(\d+)\/?$/) || [])[1];
+  if (id) {
+    // Apple's public catalogue lookup gives the song name and artist.
+    const data = await getJson(`https://itunes.apple.com/lookup?id=${encodeURIComponent(id)}&country=${country}`).catch(() => null);
+    const r = data && data.results && data.results[0];
+    if (r) {
+      return { kind: "apple", url: u.href, title: String(r.trackName || r.collectionName || "Apple Music").slice(0, 200),
+               subtitle: String(r.artistName || "Apple Music").slice(0, 120),
+               image: safeUrl(String(r.artworkUrl100 || "").replace("100x100bb", "300x300bb")) };
+    }
+  }
+  const data = await getJson(`https://music.apple.com/api/oembed?url=${encodeURIComponent(u.href)}`);
+  return { kind: "apple", url: u.href, title: String(data.title || "Apple Music").slice(0, 200),
+           subtitle: String(data.author_name || "Apple Music").slice(0, 120), image: safeUrl(data.thumbnail_url || "") };
+}
+
+async function previewImdb(u) {
+  const id = (u.pathname.match(/\/(?:title|name)\/((?:tt|nm)\d+)/) || [])[1];
+  if (!id) throw new Error("bad link");
+  // IMDb's public search-suggestion service: title, year, main cast and poster.
+  const data = await getJson(`https://v3.sg.media-imdb.com/suggestion/x/${id}.json`);
+  const r = (data.d || []).find((x) => x.id === id);
+  if (!r) throw new Error("not found");
+  const poster = r.i && r.i.imageUrl ? String(r.i.imageUrl).replace(/\._V1_.*\.jpg$/, "._V1_UX300_.jpg") : "";
+  return { kind: "imdb", url: `https://www.imdb.com/${id.startsWith("nm") ? "name" : "title"}/${id}/`,
+           title: String(r.l || "IMDb").slice(0, 200),
+           subtitle: [r.y, r.q, r.s].filter(Boolean).join(" · ").slice(0, 160), image: safeUrl(poster) };
+}
+
+/** Turn a pasted YouTube, Spotify, Apple Music or IMDb link into a card
+ * {kind, url, title, subtitle, image}, using the sites' public preview services (no keys). */
 export async function previewLink(text) {
   const u = httpsUrl(text || "");
   if (!u) throw new Error("Paste a link that starts with https://");
   let kind;
   let endpoint;
+  if (u.hostname === APPLE_HOST || IMDB_HOSTS.includes(u.hostname)) {
+    const apple = u.hostname === APPLE_HOST;
+    try {
+      return await (apple ? previewApple(u) : previewImdb(u));
+    } catch {
+      throw new Error(`Couldn't find that on ${apple ? "Apple Music" : "IMDb"}. Check the link.`);
+    }
+  }
   if (YOUTUBE_HOSTS.includes(u.hostname)) {
     kind = "youtube";
     endpoint = `https://www.youtube.com/oembed?format=json&url=${encodeURIComponent(u.href)}`;
@@ -267,7 +331,7 @@ export async function previewLink(text) {
     kind = "spotify";
     endpoint = `https://open.spotify.com/oembed?url=${encodeURIComponent(u.href)}`;
   } else {
-    throw new Error("Paste a YouTube or Spotify link.");
+    throw new Error("That kind of link isn't supported. Use YouTube, Spotify, Apple Music or IMDb.");
   }
   let data;
   try {
@@ -286,6 +350,12 @@ export async function previewLink(text) {
   };
 }
 
+/** A card's items as a clean list (older cards stored a single item). Blank ones are dropped. */
+export function studyItems(studying) {
+  const list = Array.isArray(studying) ? studying : studying ? [studying] : [];
+  return list.filter((x) => x && typeof x === "object" && x.kind && x.title).slice(0, MAX_STUDY_ITEMS);
+}
+
 /** My own card: {studying, message}. */
 export async function myStatus() {
   const c = await sb();
@@ -300,7 +370,8 @@ export async function setStatus({ studying, message }) {
   const c = await sb();
   const user = await currentUser();
   if (!user) throw new Error("Connect first.");
-  const row = { user_id: user.id, studying: studying || null, message: (message || "").trim().slice(0, 300) };
+  const items = studyItems(studying);
+  const row = { user_id: user.id, studying: items.length ? items : null, message: (message || "").trim().slice(0, 300) };
   const { error } = await c.from("statuses").upsert(row, { onConflict: "user_id" });
   if (error) throw new Error(friendly(error));
 }
@@ -392,22 +463,54 @@ export function sendShare(friendId, { folder = null, words }) {
   return insertMessage(friendId, { kind: "share", payload: { folder: folder ? String(folder).slice(0, 80) : null, words: clean } });
 }
 
-export async function markRead(friendId) {
-  await (await sb()).rpc("mark_read", { friend: friendId });
+// Messages disappear, Snapchat-style: text once the recipient has seen it and left the chat,
+// voice notes once played, shared words once added or dismissed, everything after 30 days.
+
+async function removeVoiceFiles(paths) {
+  const list = (paths || []).filter(Boolean);
+  if (list.length) await (await sb()).storage.from("voice").remove(list).catch(() => {});
 }
 
-export async function deleteMessage(id) {
-  const { error } = await (await sb()).from("messages").delete().eq("id", id);
+/** Mark messages as seen (they are deleted the next time `clearSeen` runs). */
+export async function markSeen(ids) {
+  if (ids.length) await (await sb()).rpc("mark_seen", { ids });
+}
+
+/** Delete everything from this friend that I've already seen (and its voice files). */
+export async function clearSeen(friendId) {
+  const { data, error } = await (await sb()).rpc("clear_seen", { friend: friendId });
+  if (!error) await removeVoiceFiles(data);
+}
+
+/** Remove one message sent to me (a shared-words card I've added or dismissed). */
+export async function dismissMessage(id) {
+  const { data, error } = await (await sb()).rpc("dismiss_message", { message_id: id });
+  if (error) throw new Error(friendly(error));
+  await removeVoiceFiles(data);
+}
+
+/** Clear anything older than 30 days from my conversations. */
+export async function purgeOldMessages() {
+  const { data, error } = await (await sb()).rpc("purge_old_messages");
+  if (!error) await removeVoiceFiles(data);
+}
+
+/** Unsend one of my own messages. */
+export async function deleteMessage(message) {
+  if (message.kind === "voice" && message.payload) await removeVoiceFiles([message.payload.path]);
+  const { error } = await (await sb()).from("messages").delete().eq("id", message.id);
   if (error) throw new Error(friendly(error));
 }
 
-/** Call `handler(message)` for each new message to or from me. Returns an unsubscribe. */
-export async function onMessage(handler) {
+/** Call `handler(message)` for each new message to or from me, and `onGone(id)` when one is
+ * deleted (seen by the other person, or unsent). Returns an unsubscribe. */
+export async function onMessage(handler, onGone = () => {}) {
   const user = await currentUser();
   if (!user) return () => {};
   const c = await sb();
   const channel = c.channel(`messages-${user.id}-${Math.random().toString(36).slice(2, 8)}`)
     .on("postgres_changes", { event: "INSERT", schema: "public", table: "messages" }, (e) => handler(e.new))
+    .on("postgres_changes", { event: "DELETE", schema: "public", table: "messages" }, (e) => onGone(e.old && e.old.id))
     .subscribe();
   return () => { c.removeChannel(channel); };
 }

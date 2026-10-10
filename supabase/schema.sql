@@ -307,3 +307,64 @@ begin
     end if;
   end loop;
 end $$;
+
+-- ================================================================ v3: disappearing messages
+-- Text disappears for both people once the recipient has seen it and left the chat; a voice
+-- note once it has been played. Shared words stay until added or dismissed. Anything never
+-- opened is cleared after 30 days. Each function returns the voice files to delete from storage.
+
+-- Mark specific messages as seen (text when shown, voice notes when played).
+create or replace function public.mark_seen(ids uuid[]) returns void
+language sql security definer set search_path = public as $$
+  update public.messages set read_at = now()
+  where id = any(ids) and recipient = auth.uid() and read_at is null;
+$$;
+revoke all on function public.mark_seen(uuid[]) from public, anon;
+grant execute on function public.mark_seen(uuid[]) to authenticated;
+
+-- Delete what I have already seen from this friend (not shared words: those wait for a decision).
+create or replace function public.clear_seen(friend uuid) returns setof text
+language sql security definer set search_path = public as $$
+  with gone as (
+    delete from public.messages
+    where recipient = auth.uid() and sender = friend and read_at is not null and kind <> 'share'
+    returning kind, payload
+  )
+  select payload->>'path' from gone where kind = 'voice' and payload->>'path' is not null;
+$$;
+revoke all on function public.clear_seen(uuid) from public, anon;
+grant execute on function public.clear_seen(uuid) to authenticated;
+
+-- Remove one message sent to me (after adding shared words, or dismissing them).
+create or replace function public.dismiss_message(message_id uuid) returns setof text
+language sql security definer set search_path = public as $$
+  with gone as (
+    delete from public.messages where id = message_id and recipient = auth.uid()
+    returning kind, payload
+  )
+  select payload->>'path' from gone where kind = 'voice' and payload->>'path' is not null;
+$$;
+revoke all on function public.dismiss_message(uuid) from public, anon;
+grant execute on function public.dismiss_message(uuid) to authenticated;
+
+-- Clear my conversations of anything older than 30 days, opened or not.
+create or replace function public.purge_old_messages() returns setof text
+language sql security definer set search_path = public as $$
+  with gone as (
+    delete from public.messages
+    where auth.uid() in (sender, recipient) and created_at < now() - interval '30 days'
+    returning kind, payload
+  )
+  select payload->>'path' from gone where kind = 'voice' and payload->>'path' is not null;
+$$;
+revoke all on function public.purge_old_messages() from public, anon;
+grant execute on function public.purge_old_messages() to authenticated;
+
+-- Either person in a conversation may delete its voice files.
+drop policy if exists "voice: remove from own conversations" on storage.objects;
+create policy "voice: remove from own conversations" on storage.objects
+  for delete to authenticated
+  using (bucket_id = 'voice' and public.in_conversation((storage.foldername(name))[1]));
+
+-- Deletions reach the other person's open chat at once (the message id is all that is sent).
+alter table public.messages replica identity default;

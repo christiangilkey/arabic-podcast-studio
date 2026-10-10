@@ -96,9 +96,16 @@ begin
   update public.messages set body = 'edited' where sender = b;
   get diagnostics n = row_count;
   if n = 0 then ok := ok + 1; else bad := bad || ' recipient-edited-a-message'; end if;
-  perform public.mark_read(b);
-  select count(*) into n from public.messages where read_at is not null;
-  if n = 2 then ok := ok + 1; else bad := bad || ' mark-read=' || n; end if;
+  -- disappearing messages: seen text is deleted, shared words wait until dismissed
+  perform public.mark_seen(array(select id from public.messages where recipient = a));
+  select count(*) into n from public.clear_seen(b);
+  select count(*) into n from public.messages;
+  if n = 1 then ok := ok + 1; else bad := bad || ' after-clear-seen=' || n; end if;
+  select count(*) into n from public.messages where kind = 'share';
+  if n = 1 then ok := ok + 1; else bad := bad || ' share-was-cleared-too-early'; end if;
+  perform public.dismiss_message((select id from public.messages where kind = 'share'));
+  select count(*) into n from public.messages;
+  if n = 0 then ok := ok + 1; else bad := bad || ' dismiss-failed=' || n; end if;
   select count(*) into n from public.statuses where user_id = b;
   if n = 1 then ok := ok + 1; else bad := bad || ' alice-cant-see-friends-status'; end if;
   select count(*) into n from storage.objects where bucket_id = 'voice' and name like conv || '/%';
@@ -110,6 +117,7 @@ begin
   if n = 1 then ok := ok + 1; else bad := bad || ' alice-cant-edit-shared-word'; end if;
   select count(*) into n from public.game_invites;
   if n = 1 then ok := ok + 1; else bad := bad || ' alice-invites=' || n; end if;
+  insert into public.messages (sender, recipient, body) values (a, b, 'reply');
   execute 'reset role';
 
   -- ---- as carol (not a friend of anyone): sees none of it
@@ -122,6 +130,8 @@ begin
   if n = 0 then ok := ok + 1; else bad := bad || ' carol-sees=' || n; end if;
   select count(*) into n from public.profiles where username in ('alice_t', 'bob_t');
   if n = 2 then ok := ok + 1; else bad := bad || ' carol-cant-look-up-usernames'; end if;
+  perform public.clear_seen(b);
+  perform public.purge_old_messages();
   begin
     insert into public.shared_words (folder_id, text, added_by) values (folder, 'x', c);
     bad := bad || ' carol-wrote-to-folder';
@@ -137,7 +147,16 @@ begin
     bad := bad || ' stranger-could-message';
   exception when others then ok := ok + 1;
   end;
+  begin
+    delete from storage.objects where bucket_id = 'voice';
+    get diagnostics n = row_count;
+    if n = 0 then ok := ok + 1; else bad := bad || ' stranger-deleted-voice-files'; end if;
+  exception when others then ok := ok + 1;
+  end;
   execute 'reset role';
+
+  select count(*) into n from public.messages;
+  if n = 1 then ok := ok + 1; else bad := bad || ' stranger-cleared-messages=' || n; end if;
 
   -- ---- unfriend: alice removes bob, and his status disappears for her
   perform set_config('request.jwt.claims', json_build_object('sub', a, 'role', 'authenticated')::text, true);

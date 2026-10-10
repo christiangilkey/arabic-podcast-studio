@@ -527,7 +527,21 @@ mark { background: var(--hl); color: var(--hl-ink); border-radius: 3px; padding:
 .study-sub { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .study-actions { flex: none; }
 .study-note { margin-top: 6px; padding: 6px 12px; border-left: 3px solid var(--accent); color: var(--text); font-style: italic; overflow-wrap: anywhere; }
-.spotify-frame { width: 100%; height: 152px; border: 0; border-radius: 12px; margin-top: 8px; }
+.music-frame { width: 100%; height: 152px; border: 0; border-radius: 12px; margin-top: 8px; }
+.music-frame.apple { height: 175px; }
+.study-label { margin-bottom: 4px; }
+.study-item + .study-item { margin-top: 6px; }
+.study-card.poster img { width: 44px; height: 64px; }
+.se-help { margin: 0; padding: 10px 14px; }
+.se-help ul { margin: 6px 0; padding-left: 18px; }
+.se-help li { margin: 4px 0; }
+.se-slot { display: flex; flex-direction: column; gap: 6px; }
+.se-bar { gap: 6px; }
+.se-num { width: 14px; text-align: center; flex: none; }
+.se-filled { display: flex; align-items: center; gap: 6px; }
+.se-filled .study-item { flex: 1; min-width: 0; }
+.chat-note { text-align: center; padding: 4px 10px; border-bottom: 1px solid var(--border); flex: none; }
+.msg.vanish { opacity: 0; transform: scale(.96); transition: opacity .3s ease, transform .3s ease; }
 .study-editor .se-tabs button.active { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
 .se-results { display: flex; flex-direction: column; gap: 4px; max-height: 260px; overflow-y: auto; }
 .se-result { display: flex; flex-direction: column; align-items: flex-start; text-align: left; gap: 0; padding: 6px 10px; width: 100%; }
