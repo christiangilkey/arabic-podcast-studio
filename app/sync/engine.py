@@ -5,6 +5,7 @@ Drive layout (hidden app folder, shared by desktop and Android):
     t_<episode>.json.gz  one transcript per episode (written once per transcription)
     a_<episode>.ogg      compressed copy of the exact audio that was transcribed
     v_<episode>.<ext>    the user's own video files ("My videos"; see app/videos.py)
+    c_<vocab word>.ogg   audio clips of vocab words received from friends
 
 Merge rule: per record, the newest `updated_at` wins. Deletions are kept as tombstones so
 they propagate instead of being resurrected by another device.
@@ -34,6 +35,14 @@ def transcript_name(uid: str) -> str:
 
 def audio_name(uid: str) -> str:
     return f"a_{uid}.ogg"
+
+
+def clip_name(uid: str) -> str:
+    return f"c_{uid}.ogg"
+
+
+def clip_path(uid: str) -> Path:
+    return paths.clips_dir() / f"{uid}.ogg"
 
 
 @dataclass
@@ -79,7 +88,7 @@ def snapshot(device_id: str) -> dict[str, Any]:
             "FROM episodes e JOIN feeds f ON f.id = e.feed_id WHERE f.deleted = 0 ORDER BY e.uid")]
         vocab = [{**dict(r), "folders": _folder_list(r["folders"])} for r in conn.execute(
             "SELECT uid, episode_uid, text, sentence, start, end, sent_start, sent_end, meaning, notes, "
-            "episode_title, folders, deleted, created_at, updated_at FROM vocab ORDER BY uid")]
+            "episode_title, folders, clip, deleted, created_at, updated_at FROM vocab ORDER BY uid")]
         folders = [dict(r) for r in conn.execute(
             "SELECT uid, name, deleted, created_at, updated_at FROM vocab_folders ORDER BY uid")]
         defs = [{**dict(r), "data": json.loads(r["data"])} for r in conn.execute(
@@ -183,17 +192,19 @@ def merge(remote: dict[str, Any], result: Result) -> list[tuple[int, str, float]
             local = conn.execute("SELECT * FROM vocab WHERE uid = ?", (r["uid"],)).fetchone()
             values = (r["text"], arabic.normalize(r["text"]), r["sentence"], r["start"], r["end"], r["sent_start"],
                       r["sent_end"], r["meaning"], r["notes"], r["episode_title"], r["deleted"], r["episode_uid"],
-                      ep_ids.get(r["episode_uid"]), json.dumps(_folder_list(r.get("folders") or [])), r["updated_at"])
+                      ep_ids.get(r["episode_uid"]), json.dumps(_folder_list(r.get("folders") or [])),
+                      1 if r.get("clip") else 0, r["updated_at"])
             if local is None:
                 conn.execute(
                     "INSERT INTO vocab(text, norm, sentence, start, end, sent_start, sent_end, meaning, notes, "
-                    "episode_title, deleted, episode_uid, episode_id, folders, updated_at, uid, created_at) "
-                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (*values, r["uid"], r["created_at"]))
+                    "episode_title, deleted, episode_uid, episode_id, folders, clip, updated_at, uid, created_at) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (*values, r["uid"], r["created_at"]))
                 result.merged["vocab"] += 1
             elif _newer(r, local):
                 conn.execute(
                     "UPDATE vocab SET text=?, norm=?, sentence=?, start=?, end=?, sent_start=?, sent_end=?, meaning=?, "
-                    "notes=?, episode_title=?, deleted=?, episode_uid=?, episode_id=?, folders=?, updated_at=? WHERE id=?",
+                    "notes=?, episode_title=?, deleted=?, episode_uid=?, episode_id=?, folders=?, clip=?, updated_at=? "
+                    "WHERE id=?",
                     (*values, local["id"]))
                 result.merged["vocab"] += 1
 
@@ -299,6 +310,7 @@ def run(drive: Drive, device_id: str, sync_audio: bool, can_transcribe: bool) ->
 
     # 2. Publish the user's own videos (always: Drive is where they're kept), then audio copies.
     upload_videos(drive, files, result)
+    upload_clips(drive, files)
     if sync_audio:
         upload_audio_copies(drive, files, result)
 
@@ -385,7 +397,38 @@ def upload_videos(drive: Drive, files: dict[str, dict[str, Any]], result: Result
         result.uploaded_videos += 1
 
 
+def upload_clips(drive: Drive, files: dict[str, dict[str, Any]]) -> None:
+    """Publish audio clips of words received from friends, so the user's other devices can play them."""
+    with db.session() as conn:
+        rows = conn.execute("SELECT uid FROM vocab WHERE clip = 1 AND deleted = 0").fetchall()
+    for v in rows:
+        name = clip_name(v["uid"])
+        src = clip_path(v["uid"])
+        if name not in files and src.exists():
+            files[name] = drive.upload(name, src, "audio/ogg")
+
+
+def fetch_clip(drive: Drive, uid: str) -> Path | None:
+    """Download a word's clip (saved on another of the user's devices)."""
+    match = [f for f in drive.list() if f["name"] == clip_name(uid)]
+    if not match:
+        return None
+    dest = clip_path(uid)
+    drive.download_to(match[0]["id"], dest)
+    return dest
+
+
 def remove_deleted_media(drive: Drive, files: dict[str, dict[str, Any]]) -> None:
+    with db.session() as conn:
+        gone = [r["uid"] for r in conn.execute("SELECT uid FROM vocab WHERE clip = 1 AND deleted = 1")]
+    for uid in gone:
+        clip_path(uid).unlink(missing_ok=True)
+        meta = files.pop(clip_name(uid), None)
+        if meta is not None:
+            try:
+                drive.delete(meta["id"])
+            except Exception as exc:
+                log.info("Couldn't delete %s from Drive: %s", clip_name(uid), exc)
     with db.session() as conn:
         rows = conn.execute("SELECT uid, audio_url FROM episodes WHERE deleted = 1").fetchall()
     for ep in rows:

@@ -110,6 +110,7 @@ async function doSync() {
   try {
     let files = Object.fromEntries((await drive.list()).map((f) => [f.name, f]));
     await uploadPendingTranscripts(files);
+    await uploadPendingClips(files);
     for (let attempt = 0; attempt < 3; attempt++) {
       const meta = files[LIBRARY];
       const remote = meta ? await gunzipJson(await drive.download(meta.id)) : null;
@@ -152,6 +153,26 @@ async function uploadPendingTranscripts(files) {
     }
   }
   await kv.set("pending_transcripts", left);
+}
+
+/** Upload audio clips of words friends shared with this phone, so the computer gets them too. */
+async function uploadPendingClips(files) {
+  const pending = (await kv.get("pending_clips")) || [];
+  if (!pending.length) return;
+  const left = [];
+  for (const uid of pending) {
+    const blob = await audio.get(`clip:${uid}`);
+    const word = lib.vocab.find((v) => v.uid === uid);
+    if (!blob || !word || word.deleted) continue;
+    const name = `c_${uid}.ogg`;
+    try {
+      if (!files[name]) files[name] = await drive.upload(name, blob, "audio/ogg");
+    } catch (e) {
+      console.warn("Clip upload failed", uid, e);
+      left.push(uid);
+    }
+  }
+  await kv.set("pending_clips", left);
 }
 
 /** Free phone storage held by videos deleted on any device. */

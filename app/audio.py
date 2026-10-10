@@ -131,6 +131,74 @@ def encode_speech_copy(src: Path, dst: Path, bitrate: int = 32_000) -> Path:
     return dst
 
 
+def cut_clip(src: Path, start: float, end: float, dst: Path, bitrate: int = 24_000) -> float:
+    """Save the part of `src` between `start` and `end` (seconds) as a small mono Opus file.
+
+    Used for the audio that travels with a shared vocab word. Returns the time in `src` where
+    the clip really begins (cuts land on audio-frame boundaries, a few hundredths of a second),
+    so word positions inside the clip can be worked out exactly.
+    """
+    import os
+
+    import av
+
+    start = max(0.0, float(start))
+    end = max(start + 0.2, float(end))
+    tmp = dst.with_name(dst.name + ".part")
+    first: float | None = None
+    try:
+        with av.open(str(src)) as inp, av.open(str(tmp), "w", format="ogg") as out:
+            ins = next((s for s in inp.streams if s.type == "audio"), None)
+            if ins is None:
+                raise AudioError("The file contains no audio stream.")
+            ost = out.add_stream("libopus", rate=48000, layout="mono")
+            ost.bit_rate = bitrate
+            resampler = av.AudioResampler(format="s16", layout="mono", rate=48000)
+            # Jump to just before the clip, then decode forward to the exact spot.
+            inp.seek(int(max(0.0, start - 1.0) * av.time_base), any_frame=False, backward=True)
+
+            def emit(frames: list) -> None:
+                for f in frames:
+                    f.pts = None
+                    for pkt in ost.encode(f):
+                        out.mux(pkt)
+
+            done = False
+            for packet in inp.demux(ins):
+                try:
+                    decoded = packet.decode()
+                except av.error.InvalidDataError:
+                    continue
+                for frame in decoded:
+                    t = frame.time
+                    if t is None:
+                        continue
+                    length = frame.samples / frame.sample_rate if frame.sample_rate else 0.0
+                    if t + length <= start:
+                        continue
+                    if t >= end:
+                        done = True
+                        break
+                    if first is None:
+                        first = float(t)
+                    emit(resampler.resample(frame))
+                if done:
+                    break
+            if first is None:
+                raise AudioError("That part of the audio couldn't be read.")
+            emit(resampler.resample(None))
+            for pkt in ost.encode(None):
+                out.mux(pkt)
+    except AudioError:
+        tmp.unlink(missing_ok=True)
+        raise
+    except Exception as exc:
+        tmp.unlink(missing_ok=True)
+        raise AudioError(f"Could not cut the audio clip: {exc}") from exc
+    os.replace(tmp, dst)
+    return first
+
+
 def check_ffmpeg() -> tuple[bool, str]:
     """Startup check that the bundled FFmpeg libraries load and can encode/decode."""
     try:

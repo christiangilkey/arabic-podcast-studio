@@ -141,6 +141,30 @@ export async function googleIdToken() {
  * has nothing to vibrate, so this does nothing here (the visual feedback is in the styles). */
 export function buzz() {}
 
+// ---------- audio clips of shared words ----------
+/** The clip to send with a word: {blob, times}, or null when the word has no audio here. */
+export async function shareClip(word) {
+  try {
+    const r = await api(`/vocab/${word.id}/share-clip`);
+    const bytes = Uint8Array.from(atob(r.audio), (ch) => ch.charCodeAt(0));
+    return { blob: new Blob([bytes], { type: "audio/ogg" }), times: r.times };
+  } catch {
+    return null;
+  }
+}
+
+/** Keep the clip that came with a shared word (after the word itself was saved). */
+export async function saveClip(vocabId, blob, times) {
+  const q = new URLSearchParams({ start: times.start, end: times.end, sent_start: times.sent_start, sent_end: times.sent_end });
+  const res = await fetch(`/api/vocab/${vocabId}/clip?${q}`, { method: "PUT", body: blob });
+  if (!res.ok) throw new Error("Couldn't save the audio for that word.");
+}
+
+/** Address the vocab page plays for a word that has its own clip. */
+export async function clipUrl(word) {
+  return `/api/vocab/${word.id}/clip`;
+}
+
 /** Download a web page for "Add a webpage": {url, html}. The desktop's server fetches it. */
 export async function fetchPage(url) {
   return api(`/web/fetch?url=${encodeURIComponent(url)}`);

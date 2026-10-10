@@ -187,6 +187,20 @@ def fetch_media(name: str, dest: Path, progress: Any = None) -> Path:
     return dest
 
 
+def vocab_clip(uid: str) -> Path | None:
+    """Fetch a vocab word's audio clip from Drive (it was saved on another device)."""
+    if not oauth.signed_in():
+        return None
+    drive = GoogleDrive(lambda force: oauth.access_token(force))
+    try:
+        return engine.fetch_clip(drive, uid)
+    except Exception as exc:
+        log.warning("Couldn't fetch the clip for word %s: %s", uid, exc)
+        return None
+    finally:
+        drive.close()
+
+
 def audio_copy(episode_id: int) -> Path | None:
     """Fetch the synced audio copy for an episode (used by the player)."""
     if not oauth.signed_in():

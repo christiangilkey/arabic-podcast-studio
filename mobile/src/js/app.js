@@ -14,8 +14,8 @@ import { startBadge } from "./social.js";
 import { addUploadedVideo, handle } from "./backend.js";
 import { accessToken, drive } from "./drive.js";
 import { App, Filesystem, GoogleDriveAuth, NativeHttp, Share, isNative } from "./native.js";
-import { kv, lib, loadLibrary, loadSettings, saveSettingsPatch, settings } from "./store.js";
-import { audioCopy, driveFileId, onSync, syncNow } from "./sync.js";
+import { audio as audioStore, kv, lib, loadLibrary, loadSettings, saveLibrary, saveSettingsPatch, settings } from "./store.js";
+import { audioCopy, driveFileId, onSync, requestSync, syncNow } from "./sync.js";
 import { newUid, toSrt, toTxt, toVtt, vocabAnki, vocabCsv } from "./shared-logic.js";
 
 export const platform = "android";
@@ -109,6 +109,56 @@ export async function googleIdToken() {
   const hashed = Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
   const r = await GoogleDriveAuth.getIdToken({ serverClientId: WEB_CLIENT_ID, nonce: hashed });
   return { token: r.idToken, nonce };
+}
+
+// ---------- audio clips of shared words ----------
+// A word a friend shared keeps its own short clip (stored on the phone as "clip:<word id>" and
+// in Drive as c_<word id>.ogg so the computer has it too).
+const clipKey = (uid) => `clip:${uid}`;
+
+/** The clip to send with a word: only words that already have their own clip (ones a friend
+ * shared). Cutting a new clip out of an episode is done on the computer. */
+export async function shareClip(word) {
+  if (!word.clip) return null;
+  const blob = await storedClip(word.id);
+  return blob ? { blob, times: { start: word.start, end: word.end, sent_start: word.sent_start, sent_end: word.sent_end } } : null;
+}
+
+async function storedClip(uid) {
+  let blob = await audioStore.get(clipKey(uid));
+  if (!blob && settings.signed_in) {
+    const id = await driveFileId(`c_${uid}.ogg`).catch(() => null);
+    if (id) {
+      blob = await drive.downloadBlob(id);
+      await audioStore.put(clipKey(uid), blob);
+    }
+  }
+  return blob || null;
+}
+
+/** Keep the clip that came with a shared word. */
+export async function saveClip(uid, blob, times) {
+  const v = lib.vocab.find((x) => x.uid === uid);
+  if (!v) return;
+  await audioStore.put(clipKey(uid), blob);
+  Object.assign(v, { clip: 1, start: times.start, end: times.end, sent_start: times.sent_start, sent_end: times.sent_end,
+                     updated_at: Date.now() / 1000 });
+  const pending = new Set((await kv.get("pending_clips")) || []);
+  pending.add(uid);
+  await kv.set("pending_clips", [...pending]);
+  saveLibrary();
+  requestSync();
+}
+
+const clipUrls = new Map();
+/** Address the vocab page plays for a word that has its own clip. */
+export async function clipUrl(word) {
+  if (clipUrls.has(word.id)) return clipUrls.get(word.id);
+  const blob = await storedClip(word.id);
+  if (!blob) throw new Error("This word's audio isn't on this phone yet. Sync and try again.");
+  const url = URL.createObjectURL(blob);
+  clipUrls.set(word.id, url);
+  return url;
 }
 
 // ---------- feedback ----------

@@ -452,12 +452,41 @@ export async function voiceUrl(path) {
   return data.signedUrl;
 }
 
-/** Send copies of vocab words (optionally as a named folder) to a friend. */
+export const MAX_SHARE_CLIPS = 80;
+
+/** Upload the audio clip that travels with a shared word. Resolves to its storage path. */
+export async function uploadClip(friendId, blob) {
+  const c = await sb();
+  const user = await currentUser();
+  if (!user) throw new Error("Connect first.");
+  const path = `${conversationFolder(user.id, friendId)}/clip-${crypto.randomUUID()}.ogg`;
+  const { error } = await c.storage.from("voice").upload(path, blob, { contentType: "audio/ogg" });
+  if (error) throw new Error(friendly(error));
+  return path;
+}
+
+/** Download a clip that came with a shared word. */
+export async function downloadClip(path) {
+  const { data, error } = await (await sb()).storage.from("voice").download(path);
+  if (error) throw new Error(friendly(error));
+  return data;
+}
+
+/** Delete the clips of a share from online storage (once added, dismissed or unsent). */
+export function removeShareClips(payload) {
+  return removeVoiceFiles(((payload && payload.words) || []).map((w) => w.clip));
+}
+
+/** Send copies of vocab words (optionally as a named folder) to a friend. A word may carry
+ * `clip` (the storage path of its audio) and `times` (word and sentence positions in it). */
 export function sendShare(friendId, { folder = null, words }) {
+  const num = (x) => (Number.isFinite(Number(x)) ? Math.max(0, Number(x)) : 0);
   const clean = words.slice(0, 500).map((w) => ({
     text: String(w.text || "").slice(0, 300), meaning: String(w.meaning || "").slice(0, 2000),
     notes: String(w.notes || "").slice(0, 4000), sentence: String(w.sentence || "").slice(0, 2000),
     episode_title: String(w.episode_title || "").slice(0, 300),
+    ...(w.clip && w.times ? { clip: String(w.clip).slice(0, 300), times: {
+      start: num(w.times.start), end: num(w.times.end), sent_start: num(w.times.sent_start), sent_end: num(w.times.sent_end) } } : {}),
   })).filter((w) => w.text);
   if (!clean.length) throw new Error("There's nothing to share.");
   return insertMessage(friendId, { kind: "share", payload: { folder: folder ? String(folder).slice(0, 80) : null, words: clean } });
@@ -498,6 +527,7 @@ export async function purgeOldMessages() {
 /** Unsend one of my own messages. */
 export async function deleteMessage(message) {
   if (message.kind === "voice" && message.payload) await removeVoiceFiles([message.payload.path]);
+  if (message.kind === "share") await removeShareClips(message.payload);
   const { error } = await (await sb()).from("messages").delete().eq("id", message.id);
   if (error) throw new Error(friendly(error));
 }

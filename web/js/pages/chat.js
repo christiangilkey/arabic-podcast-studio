@@ -5,7 +5,7 @@
 // people once the recipient has seen it and left the chat, a voice note once it has been
 // played, shared words once added or dismissed, and anything unopened after 30 days.
 
-import { api, h, toast } from "../app.js";
+import { api, h, toast, saveClip } from "../app.js";
 import * as social from "../social.js";
 
 const fmtClock = (iso) => new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
@@ -23,6 +23,10 @@ async function addShared(payload) {
   for (const w of payload.words || []) {
     const v = await api("/vocab", { method: "POST", body: { text: w.text, meaning: w.meaning || "", notes: w.notes || "", sentence: w.sentence || "" } });
     ids.push(v.id);
+    if (w.clip && w.times) {
+      // The word's audio: a missing or failed clip never stops the word itself being saved.
+      try { await saveClip(v.id, await social.downloadClip(w.clip), w.times); } catch (e) { console.warn("Clip not saved", e); }
+    }
   }
   if (folderUid && ids.length) await api("/vocab/bulk-folders", { method: "POST", body: { ids, add: [folderUid] } });
   return ids.length;
@@ -108,6 +112,8 @@ export async function render(view, { friendId }) {
         ? `📁 ${m.payload.folder} · ${words.length} word${words.length === 1 ? "" : "s"}`
         : `★ ${words.length} word${words.length === 1 ? "" : "s"}`;
       card.querySelector(".share-words").textContent = words.slice(0, 6).map((w) => w.text).join(" · ") + (words.length > 6 ? " …" : "");
+      const audioCount = words.filter((w) => w.clip).length;
+      if (audioCount) card.querySelector(".share-title").textContent += ` · 🔊 audio${audioCount === words.length ? "" : ` for ${audioCount}`}`;
       const action = card.querySelector(".share-action");
       if (mine) {
         action.append(h(`<span class="small muted">Sent</span>`));
@@ -122,7 +128,9 @@ export async function render(view, { friendId }) {
             action.innerHTML = `<span class="small muted">✓ Added to your vocab</span>`;
             toast(`Added ${n} word${n === 1 ? "" : "s"}${m.payload.folder ? ` to the folder “${m.payload.folder}”` : ""}.`,
                   { action: { label: "View", run: () => (location.hash = "#/vocab") } });
-            social.dismissMessage(m.id).catch(() => {}); // saved: the card is no longer needed online
+            // Saved: the card and its audio are no longer needed online.
+            social.removeShareClips(m.payload).catch(() => {});
+            social.dismissMessage(m.id).catch(() => {});
           } catch (e) {
             add.disabled = dismiss.disabled = false;
             add.textContent = "Add to my vocab";
@@ -130,7 +138,11 @@ export async function render(view, { friendId }) {
           }
         };
         dismiss.onclick = async () => {
-          try { await social.dismissMessage(m.id); el.remove(); } catch (e) { toast(e.message, { error: true }); }
+          try {
+            await social.removeShareClips(m.payload).catch(() => {});
+            await social.dismissMessage(m.id);
+            el.remove();
+          } catch (e) { toast(e.message, { error: true }); }
         };
         action.append(add, dismiss);
       }

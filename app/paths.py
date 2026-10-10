@@ -39,6 +39,11 @@ def audio_dir() -> Path:
     return _sub("audio")
 
 
+def clips_dir() -> Path:
+    """Short audio clips that came with vocab words shared by friends."""
+    return _sub("clips")
+
+
 def models_dir() -> Path:
     return _sub("models")
 

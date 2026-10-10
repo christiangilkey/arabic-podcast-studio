@@ -109,6 +109,9 @@ CREATE TABLE IF NOT EXISTS vocab (
     notes      TEXT NOT NULL DEFAULT '',
     episode_title TEXT NOT NULL DEFAULT '',
     created_at REAL NOT NULL
+    -- clip (added by migration): 1 when the word has its own audio clip (it was shared by a
+    -- friend), stored as clips/<uid>.ogg; start/end/sent_start/sent_end are then times
+    -- inside that clip instead of inside an episode.
 );
 
 -- Vocab folders (schema v3). A word can be in several: vocab.folders holds a JSON list of folder uids.
@@ -177,7 +180,8 @@ _SYNC_COLUMNS = {
                  ("remote_audio", "INTEGER NOT NULL DEFAULT 0"), ("synced_rev", "REAL"),
                  ("sync_audio_path", "TEXT"), ("deleted", "INTEGER NOT NULL DEFAULT 0")],
     "vocab": [("uid", "TEXT"), ("updated_at", "REAL"), ("deleted", "INTEGER NOT NULL DEFAULT 0"),
-              ("episode_uid", "TEXT"), ("folders", "TEXT NOT NULL DEFAULT '[]'")],
+              ("episode_uid", "TEXT"), ("folders", "TEXT NOT NULL DEFAULT '[]'"),
+              ("clip", "INTEGER NOT NULL DEFAULT 0")],
     "segments": [("kind", "TEXT")],
 }
 
@@ -207,7 +211,8 @@ CREATE TRIGGER IF NOT EXISTS vocab_ins AFTER INSERT ON vocab WHEN NEW.updated_at
 BEGIN UPDATE vocab SET updated_at = {NOW_SQL} WHERE id = NEW.id; END;
 CREATE TRIGGER IF NOT EXISTS vocab_upd AFTER UPDATE ON vocab
 WHEN NEW.updated_at IS OLD.updated_at AND NOT EXISTS (SELECT 1 FROM sync_guard) AND (NEW.text IS NOT OLD.text OR NEW.meaning IS NOT OLD.meaning
-  OR NEW.notes IS NOT OLD.notes OR NEW.deleted IS NOT OLD.deleted OR NEW.folders IS NOT OLD.folders)
+  OR NEW.notes IS NOT OLD.notes OR NEW.deleted IS NOT OLD.deleted OR NEW.folders IS NOT OLD.folders
+  OR NEW.clip IS NOT OLD.clip)
 BEGIN UPDATE vocab SET updated_at = {NOW_SQL} WHERE id = NEW.id; END;
 
 CREATE TRIGGER IF NOT EXISTS folders_ins AFTER INSERT ON vocab_folders WHEN NEW.updated_at IS NULL AND NOT EXISTS (SELECT 1 FROM sync_guard)

@@ -2,15 +2,19 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import time
+import uuid
+from pathlib import Path
 from typing import Any
 
-from fastapi import APIRouter, HTTPException
-from fastapi.responses import Response
+from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import FileResponse, Response
 from pydantic import BaseModel
 
-from .. import arabic, db, exporters, ids, sync
+from .. import arabic, audio, db, exporters, ids, paths, sync
+from ..sync import engine
 
 router = APIRouter(prefix="/vocab", tags=["vocab"])
 
@@ -164,6 +168,102 @@ def add_vocab(body: VocabIn) -> dict[str, Any]:
         row = conn.execute("SELECT * FROM vocab WHERE id = ?", (cur.lastrowid,)).fetchone()
     sync.request()
     return _out(row)
+
+
+# ----- audio clips for shared words -----
+# A word sent to a friend carries a short clip of its sentence, so their "Word" and "Sentence"
+# buttons work without having the episode. A received word keeps that clip as clips/<uid>.ogg
+# and its start/end/sent_start/sent_end are then times inside the clip.
+
+CLIP_LEAD, CLIP_TAIL, MAX_CLIP_BYTES = 0.3, 0.45, 2 * 1024 * 1024
+
+
+def _vocab_row(vocab_id: int) -> Any:
+    with db.session() as conn:
+        row = conn.execute("SELECT * FROM vocab WHERE id = ? AND deleted = 0", (vocab_id,)).fetchone()
+    if row is None:
+        raise HTTPException(404, "Not found.")
+    return row
+
+
+def _own_clip(row: Any) -> Path | None:
+    """The clip stored with a word that was shared with this user (fetched from Drive if needed)."""
+    if not row["clip"]:
+        return None
+    path = engine.clip_path(row["uid"])
+    if not path.exists():
+        path = sync.vocab_clip(row["uid"]) or path
+    return path if path.exists() else None
+
+
+def _episode_audio(episode_id: int | None) -> Path | None:
+    if episode_id is None:
+        return None
+    with db.session() as conn:
+        ep = conn.execute("SELECT audio_path, sync_audio_path, remote_audio, audio_type FROM episodes WHERE id = ?",
+                          (episode_id,)).fetchone()
+    if ep is None or (ep["audio_type"] or "") == "text/html":
+        return None
+    for stored in (ep["audio_path"], ep["sync_audio_path"]):
+        if stored and Path(stored).exists():
+            return Path(stored)
+    if ep["remote_audio"]:
+        return sync.audio_copy(episode_id)
+    return None
+
+
+@router.get("/{vocab_id}/share-clip")
+def share_clip(vocab_id: int) -> dict[str, Any]:
+    """The audio to send along with a word: {"audio": base64 Ogg/Opus, "times": {...}} with the
+    word's and sentence's positions inside it. 404 when the word has no audio to send."""
+    row = _vocab_row(vocab_id)
+    own = _own_clip(row)
+    if own is not None:  # passing on a word a friend shared: reuse its clip as is
+        times = {k: row[k] for k in ("start", "end", "sent_start", "sent_end")}
+        return {"audio": base64.b64encode(own.read_bytes()).decode("ascii"), "times": times}
+    if row["start"] is None or row["sent_start"] is None or row["sent_end"] is None:
+        raise HTTPException(404, "This word has no audio.")
+    src = _episode_audio(row["episode_id"])
+    if src is None:
+        raise HTTPException(404, "The audio for this word isn't on this computer.")
+    tmp = paths.tmp_dir() / f"clip-{uuid.uuid4().hex}.ogg"
+    try:
+        began = audio.cut_clip(src, row["sent_start"] - CLIP_LEAD, row["sent_end"] + CLIP_TAIL, tmp)
+        data = tmp.read_bytes()
+    except audio.AudioError as exc:
+        raise HTTPException(404, str(exc)) from exc
+    finally:
+        tmp.unlink(missing_ok=True)
+    word_end = row["end"] if row["end"] is not None else row["start"] + 1
+    times = {"start": round(max(0.0, row["start"] - began), 3), "end": round(max(0.0, word_end - began), 3),
+             "sent_start": round(max(0.0, row["sent_start"] - began), 3), "sent_end": round(max(0.0, row["sent_end"] - began), 3)}
+    return {"audio": base64.b64encode(data).decode("ascii"), "times": times}
+
+
+@router.put("/{vocab_id}/clip")
+async def save_clip(vocab_id: int, request: Request, start: float = 0, end: float = 0,
+                    sent_start: float = 0, sent_end: float = 0) -> dict[str, Any]:
+    """Store the clip that came with a shared word (raw request body = the audio file)."""
+    row = _vocab_row(vocab_id)
+    data = await request.body()
+    if not data or len(data) > MAX_CLIP_BYTES:
+        raise HTTPException(400, "That audio clip is empty or too large.")
+    dest = engine.clip_path(row["uid"])
+    dest.write_bytes(data)
+    with db.session() as conn:
+        conn.execute("UPDATE vocab SET clip = 1, start = ?, end = ?, sent_start = ?, sent_end = ? WHERE id = ?",
+                     (start, end, sent_start, sent_end, vocab_id))
+        out = conn.execute("SELECT * FROM vocab WHERE id = ?", (vocab_id,)).fetchone()
+    sync.request()
+    return _out(out)
+
+
+@router.get("/{vocab_id}/clip")
+def get_clip(vocab_id: int) -> Response:
+    path = _own_clip(_vocab_row(vocab_id))
+    if path is None:
+        raise HTTPException(404, "This word's audio isn't available.")
+    return FileResponse(path, media_type="audio/ogg")
 
 
 @router.patch("/{vocab_id}")

@@ -2,7 +2,7 @@
 // Words can be filed in any number of folders; the list can be sorted and filtered by when
 // a word was added or last changed.
 
-import { api, esc, h, toast, download, fmtDate, audioUrl, showMenu } from "../app.js";
+import { api, esc, h, toast, download, fmtDate, audioUrl, showMenu, shareClip, clipUrl } from "../app.js";
 import { formatTime } from "../wordlookup.js";
 import * as social from "../social.js";
 
@@ -122,13 +122,15 @@ export async function render(view) {
   };
   // Backup for when animation frames are paused (window in the background).
   audio.addEventListener("timeupdate", () => { if (audio.currentTime >= stopAt) audio.pause(); });
-  async function playSnippet(episodeId, start, end) {
-    if (audio.dataset.episode !== String(episodeId)) {
-      audio.dataset.episode = String(episodeId);
-      audio.src = await audioUrl(episodeId);
+  /** Play part of a word's audio: its own clip (a word a friend shared) or its episode. */
+  async function playSnippet(v, start, end) {
+    const source = v.clip ? `clip:${v.id}` : `episode:${v.episode_id}`;
+    if (audio.dataset.episode !== source) {
+      audio.dataset.episode = source;
+      audio.src = v.clip ? await clipUrl(v) : await audioUrl(v.episode_id);
       await new Promise((res, rej) => {
         audio.addEventListener("loadedmetadata", res, { once: true });
-        audio.addEventListener("error", () => rej(new Error("Couldn't load this episode's audio.")), { once: true });
+        audio.addEventListener("error", () => { audio.dataset.episode = ""; rej(new Error("Couldn't load this word's audio.")); }, { once: true });
       });
     }
     audio.currentTime = Math.max(0, start - 0.25);
@@ -246,10 +248,27 @@ export async function render(view) {
       st.friends.map((f) => ({
         label: `@${f.user.username}`,
         run: async () => {
+          const uploaded = [];
           try {
-            await social.sendShare(f.user.id, { folder: folderName, words });
-            toast(`Sent ${what} to ${f.user.username}.`, { action: { label: "Open chat", run: () => (location.hash = `#/chat/${f.user.id}`) } });
-          } catch (e) { toast(e.message, { error: true }); }
+            // Each word takes a short clip of its sentence with it, so your friend's
+            // "Word" and "Sentence" buttons play exactly what yours do.
+            const withAudio = words.filter((v) => (v.episode_id || v.clip) && v.start != null).slice(0, social.MAX_SHARE_CLIPS);
+            if (withAudio.length) toast(`Preparing audio for ${withAudio.length} word${withAudio.length === 1 ? "" : "s"}…`, { timeout: 2500 });
+            const clips = new Map();
+            for (const v of withAudio) {
+              const clip = await shareClip(v);
+              if (!clip) continue;
+              const path = await social.uploadClip(f.user.id, clip.blob);
+              uploaded.push(path);
+              clips.set(v.id, { clip: path, times: clip.times });
+            }
+            await social.sendShare(f.user.id, { folder: folderName, words: words.map((v) => ({ ...v, ...(clips.get(v.id) || {}) })) });
+            const audioNote = clips.size === words.length ? " with audio" : clips.size ? ` (${clips.size} with audio)` : "";
+            toast(`Sent ${what}${audioNote} to ${f.user.username}.`, { action: { label: "Open chat", run: () => (location.hash = `#/chat/${f.user.id}`) } });
+          } catch (e) {
+            social.removeShareClips({ words: uploaded.map((clip) => ({ clip })) }).catch(() => {});
+            toast(e.message, { error: true });
+          }
         },
       })));
   }
@@ -274,8 +293,8 @@ export async function render(view) {
         <input type="text" class="meaning" placeholder="Meaning">
         <textarea class="notes" rows="2" placeholder="Notes (root, grammar, usage…)"></textarea>
         <div class="row">
-          ${v.episode_id && v.start != null ? `<button type="button" class="play-word">▶ Word</button>` : ""}
-          ${v.episode_id && v.sent_start != null ? `<button type="button" class="play-sent">▶ Sentence</button>` : ""}
+          ${(v.episode_id || v.clip) && v.start != null ? `<button type="button" class="play-word">▶ Word</button>` : ""}
+          ${(v.episode_id || v.clip) && v.sent_start != null ? `<button type="button" class="play-sent">▶ Sentence</button>` : ""}
           <button type="button" class="ghost folders-btn">📁 Folders</button>
           <span class="spacer"></span>
           <span class="small muted saved" hidden>Saved</span>
@@ -318,9 +337,9 @@ export async function render(view) {
       folderMenu(r.left, r.bottom + 4, [v], "toggle");
     };
     const pw = el.querySelector(".play-word");
-    if (pw) pw.onclick = () => playSnippet(v.episode_id, v.start, v.end ?? v.start + 1).catch((e) => toast(e.message, { error: true }));
+    if (pw) pw.onclick = () => playSnippet(v, v.start, v.end ?? v.start + 1).catch((e) => toast(e.message, { error: true }));
     const ps = el.querySelector(".play-sent");
-    if (ps) ps.onclick = () => playSnippet(v.episode_id, v.sent_start, v.sent_end).catch((e) => toast(e.message, { error: true }));
+    if (ps) ps.onclick = () => playSnippet(v, v.sent_start, v.sent_end).catch((e) => toast(e.message, { error: true }));
     el.querySelector(".del").onclick = async () => {
       if (!confirm(`Delete “${v.text}” from your vocab?`)) return;
       await api(`/vocab/${v.id}`, { method: "DELETE" });
