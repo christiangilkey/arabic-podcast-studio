@@ -60,3 +60,11 @@ button, .btn { min-height: 38px; }
 .tabbar a.active .ico { background: var(--accent-soft); }
 .tabbar .nav-count { top: 3px; margin-left: 22px; }
 .brand span { font-size: 17px; }
+
+/* ---------- swipe between sections: the highlight blob slides between tabs ---------- */
+.tabbar { position: relative; }
+.tab-blob { position: absolute; left: 0; top: 0; width: 52px; height: 28px; border-radius: 99px; background: var(--accent-soft);
+  pointer-events: none; opacity: 0; will-change: transform; }
+.tabbar.has-blob a { position: relative; z-index: 1; }
+.tabbar.has-blob a.active .ico { background: transparent; }
+#view { overflow-x: hidden; }

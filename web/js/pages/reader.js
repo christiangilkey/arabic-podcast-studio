@@ -28,7 +28,7 @@ async function copyText(text) {
   toast("Copied");
 }
 
-export async function render(view, { id, data }) {
+export async function render(view, { id, data, query }) {
   const ep = data.episode;
   const W = data.words;
   const n = W.text.length;
@@ -250,6 +250,16 @@ export async function render(view, { id, data }) {
   let scrollTimer = 0;
   tr.addEventListener("scroll", () => { clearTimeout(scrollTimer); scrollTimer = setTimeout(remember, 400); }, { passive: true });
   setTimeout(remember, 50); // (a timer, not an animation frame: those pause while the window is hidden)
+  // Arrived from search: go to the matching place and point it out.
+  const jump = query && query.get("t") !== null ? Math.floor(Number(query.get("t"))) : -1;
+  if (jump >= 0 && jump < n) {
+    setTimeout(() => {
+      const el = wordEls[jump];
+      tr.scrollTop = Math.max(0, el.offsetTop - tr.clientHeight * 0.3);
+      const seg = el.closest(".seg");
+      if (seg) { seg.classList.add("found"); setTimeout(() => seg.classList.remove("found"), 2600); }
+    }, 60);
+  }
 
   return () => {
     try { localStorage.setItem(posKey, String(Math.round(tr.scrollTop))); } catch { /* storage unavailable */ }

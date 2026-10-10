@@ -73,10 +73,10 @@ export async function myProfile() {
   const c = await sb();
   const user = await currentUser();
   if (!user) return null;
-  let { data, error } = await c.from("profiles").select("id, username").eq("id", user.id).maybeSingle();
+  let { data, error } = await c.from("profiles").select("id, username, avatar_path").eq("id", user.id).maybeSingle();
   if (error) throw new Error(friendly(error));
   if (!data) {
-    const ins = await c.from("profiles").insert({ id: user.id }).select("id, username").single();
+    const ins = await c.from("profiles").insert({ id: user.id }).select("id, username, avatar_path").single();
     if (ins.error) throw new Error(friendly(ins.error));
     data = ins.data;
   }
@@ -123,14 +123,16 @@ export async function friendsState() {
   if (error) throw new Error(friendly(error));
   const otherIds = [...new Set(rows.map((r) => (r.requester === me.id ? r.addressee : r.requester)))];
   const names = new Map();
+  const photos = new Map();
   if (otherIds.length) {
-    const { data: people, error: e2 } = await c.from("profiles").select("id, username").in("id", otherIds);
+    const { data: people, error: e2 } = await c.from("profiles").select("id, username, avatar_path").in("id", otherIds);
     if (e2) throw new Error(friendly(e2));
-    for (const p of people) names.set(p.id, p.username || "(no username yet)");
+    for (const p of people) { names.set(p.id, p.username || "(no username yet)"); photos.set(p.id, p.avatar_path || null); }
   }
   const entry = (r) => {
     const other = r.requester === me.id ? r.addressee : r.requester;
-    return { id: r.id, user: { id: other, username: names.get(other) || "(unknown)" }, since: r.created_at };
+    return { id: r.id, user: { id: other, username: names.get(other) || "(unknown)", avatar_path: photos.get(other) || null },
+             since: r.created_at };
   };
   const friends = rows.filter((r) => r.status === "accepted").map(entry)
     .sort((a, b) => a.user.username.localeCompare(b.user.username));
@@ -185,7 +187,7 @@ export async function onActivity(handler) {
   if (!user) return () => {};
   const c = await sb();
   const channel = c.channel(`activity-${user.id}-${Math.random().toString(36).slice(2, 8)}`);
-  for (const table of ["friendships", "messages", "game_invites", "statuses"]) {
+  for (const table of ["friendships", "messages", "game_invites", "statuses", "guild_members", "guild_invites", "guilds"]) {
     channel.on("postgres_changes", { event: "*", schema: "public", table }, () => handler(table));
   }
   channel.subscribe();
@@ -201,6 +203,7 @@ export async function pendingCount() {
     c.from("friendships").select("id", { count: "exact", head: true }).eq("addressee", user.id).eq("status", "pending"),
     c.from("messages").select("id", { count: "exact", head: true }).eq("recipient", user.id).is("read_at", null),
     c.from("game_invites").select("id", { count: "exact", head: true }).eq("invitee", user.id),
+    c.from("guild_invites").select("id", { count: "exact", head: true }).eq("invitee", user.id),
   ]);
   return counts.reduce((n, r) => n + (r.count || 0), 0);
 }
@@ -221,8 +224,15 @@ export function startBadge() {
   const watch = async () => { off(); off = await onActivity(paint).catch(() => () => {}); paint(); };
   sb().then((c) => c.auth.onAuthStateChange((event) => {
     if (event === "SIGNED_IN" || event === "SIGNED_OUT" || event === "INITIAL_SESSION") setTimeout(watch, 0);
+    if (event === "SIGNED_IN") setTimeout(() => heartbeat(true), 0);
   })).catch(() => {});
   setInterval(paint, 120000);
+  // "I'm here": while the app is in use, about once a minute; "gone" as soon as it's put away.
+  const beat = () => { if (document.visibilityState !== "hidden") heartbeat(true); };
+  setInterval(beat, 60000);
+  setTimeout(beat, 1500);
+  document.addEventListener("visibilitychange", () => heartbeat(document.visibilityState !== "hidden"));
+  window.addEventListener("pagehide", () => heartbeat(false));
 }
 
 // ---------------------------------------------------------------- "What I'm studying" cards
@@ -543,4 +553,189 @@ export async function onMessage(handler, onGone = () => {}) {
     .on("postgres_changes", { event: "DELETE", schema: "public", table: "messages" }, (e) => onGone(e.old && e.old.id))
     .subscribe();
   return () => { c.removeChannel(channel); };
+}
+
+// ---------------------------------------------------------------- profile photos
+
+const AVATAR_SIZE = 256;
+
+/** Public address of a profile photo ("" when the person has none). */
+export function avatarUrl(path) {
+  return path ? `${SUPABASE_URL}/storage/v1/object/public/avatars/${String(path).split("/").map(encodeURIComponent).join("/")}` : "";
+}
+
+/** Crop a picture to a centred square and shrink it: a small file whatever was chosen. */
+async function squarePhoto(file) {
+  let source;
+  try {
+    source = await createImageBitmap(file);
+  } catch {
+    throw new Error("That file isn't a picture the app can read. Try a JPG or PNG.");
+  }
+  const side = Math.min(source.width, source.height);
+  const canvas = document.createElement("canvas");
+  canvas.width = canvas.height = AVATAR_SIZE;
+  canvas.getContext("2d").drawImage(source, (source.width - side) / 2, (source.height - side) / 2, side, side, 0, 0, AVATAR_SIZE, AVATAR_SIZE);
+  const blob = (type) => new Promise((resolve) => canvas.toBlob(resolve, type, 0.86));
+  return (await blob("image/webp")) || (await blob("image/jpeg"));
+}
+
+/** Set my profile photo from a picture file. Resolves to the new avatar path. */
+export async function uploadAvatar(file) {
+  const c = await sb();
+  const me = await myProfile();
+  if (!me) throw new Error("Connect first.");
+  const photo = await squarePhoto(file);
+  if (!photo) throw new Error("Couldn't prepare that picture.");
+  const path = `${me.id}/${Date.now()}.${photo.type === "image/webp" ? "webp" : "jpg"}`;
+  const up = await c.storage.from("avatars").upload(path, photo, { contentType: photo.type, cacheControl: "31536000" });
+  if (up.error) throw new Error(`Couldn't upload the picture: ${friendly(up.error)}`);
+  const { error } = await c.from("profiles").update({ avatar_path: path }).eq("id", me.id);
+  if (error) throw new Error(friendly(error));
+  if (me.avatar_path) c.storage.from("avatars").remove([me.avatar_path]).catch(() => {});
+  return path;
+}
+
+export async function removeAvatar() {
+  const c = await sb();
+  const me = await myProfile();
+  if (!me || !me.avatar_path) return;
+  const { error } = await c.from("profiles").update({ avatar_path: null }).eq("id", me.id);
+  if (error) throw new Error(friendly(error));
+  c.storage.from("avatars").remove([me.avatar_path]).catch(() => {});
+}
+
+// ---------------------------------------------------------------- online / offline
+
+export const ONLINE_WITHIN_SECONDS = 150;
+
+/** Tell the service this device is in use (or, with false, that it just stopped being). */
+export async function heartbeat(online = true) {
+  if (!(await currentUser())) return;
+  await (await sb()).rpc("heartbeat", { online }).then(() => {}, () => {});
+}
+
+/** Who of these people is online right now: Set of user ids. */
+export async function onlineAmong(userIds) {
+  const out = new Set();
+  if (!userIds.length) return out;
+  const { data, error } = await (await sb()).rpc("seen_ago", { people: userIds });
+  if (error) return out;
+  for (const r of data) if (r.seconds !== null && r.seconds < ONLINE_WITHIN_SECONDS) out.add(r.user_id);
+  return out;
+}
+
+// ---------------------------------------------------------------- guilds
+// A guild has a name, a short tag shown beside its members' names, and up to 50 members. You
+// can be in any number of guilds. Any member can invite their own friends; the founder can
+// rename it and remove members. Guild-mates see each other's cards and can message each other.
+
+export const GUILD_TAG_HELP = "2–5 letters or numbers, no spaces.";
+
+function guildError(error) {
+  const msg = (error && error.message) || "";
+  if (error && error.code === "23505") return "A guild with that name already exists. Try another name.";
+  if (error && error.code === "23514") return `Guild names are 2–40 characters; tags are ${GUILD_TAG_HELP.toLowerCase()}`;
+  if (error && error.code === "42501") return "You can only invite your own friends, to a guild you're in.";
+  return /full|no longer available|Not signed in/.test(msg) ? msg : friendly(error);
+}
+
+/** My guilds with their members, and invitations waiting for me:
+ * {me, guilds: [{id, name, tag, owner, mine, members: [{id, username, avatar_path}]}],
+ *  invites: [{id, guild: {id, name, tag}, inviter}], sent: [{id, guild_id, invitee}]} */
+export async function guildsState() {
+  const c = await sb();
+  const user = await currentUser();
+  if (!user) return null;
+  const mine = await c.from("guild_members").select("guild_id").eq("user_id", user.id);
+  if (mine.error) throw new Error(friendly(mine.error));
+  const invites = await c.from("guild_invites").select("id, guild_id, inviter, invitee, created_at");
+  if (invites.error) throw new Error(friendly(invites.error));
+  const myIds = mine.data.map((r) => r.guild_id);
+  const guildIds = [...new Set([...myIds, ...invites.data.map((i) => i.guild_id)])];
+  const guilds = new Map();
+  if (guildIds.length) {
+    const g = await c.from("guilds").select("id, name, tag, owner, created_at").in("id", guildIds);
+    if (g.error) throw new Error(friendly(g.error));
+    for (const row of g.data) guilds.set(row.id, { ...row, mine: row.owner === user.id, members: [] });
+  }
+  const people = new Map();
+  if (myIds.length) {
+    const m = await c.from("guild_members").select("guild_id, user_id, joined_at").in("guild_id", myIds).order("joined_at");
+    if (m.error) throw new Error(friendly(m.error));
+    const ids = [...new Set([...m.data.map((r) => r.user_id), ...invites.data.flatMap((i) => [i.inviter, i.invitee])])];
+    const p = await c.from("profiles").select("id, username, avatar_path").in("id", ids);
+    if (p.error) throw new Error(friendly(p.error));
+    for (const row of p.data) people.set(row.id, { ...row, username: row.username || "(no username yet)" });
+    for (const r of m.data) {
+      const guild = guilds.get(r.guild_id);
+      if (guild) guild.members.push(people.get(r.user_id) || { id: r.user_id, username: "(unknown)", avatar_path: null });
+    }
+  } else if (invites.data.length) {
+    const p = await c.from("profiles").select("id, username, avatar_path").in("id", invites.data.map((i) => i.inviter));
+    for (const row of p.data || []) people.set(row.id, row);
+  }
+  return {
+    me: user.id,
+    guilds: myIds.map((id) => guilds.get(id)).filter(Boolean).sort((a, b) => a.name.localeCompare(b.name)),
+    invites: invites.data.filter((i) => i.invitee === user.id && guilds.has(i.guild_id))
+      .map((i) => ({ id: i.id, guild: guilds.get(i.guild_id), inviter: (people.get(i.inviter) || {}).username || "A friend" })),
+    sent: invites.data.filter((i) => i.inviter === user.id),
+  };
+}
+
+/** Guild tags to show beside people's names: Map(user id -> ["TAG", ...]). */
+export async function tagsOf(userIds) {
+  const out = new Map();
+  if (!userIds.length) return out;
+  const c = await sb();
+  const m = await c.from("guild_members").select("guild_id, user_id").in("user_id", userIds);
+  if (m.error || !m.data.length) return out;
+  const g = await c.from("guilds").select("id, tag").in("id", [...new Set(m.data.map((r) => r.guild_id))]);
+  if (g.error) return out;
+  const tag = new Map(g.data.map((r) => [r.id, r.tag]));
+  for (const r of m.data) {
+    if (!tag.has(r.guild_id)) continue;
+    out.set(r.user_id, [...(out.get(r.user_id) || []), tag.get(r.guild_id)].sort());
+  }
+  return out;
+}
+
+export async function createGuild(name, tag) {
+  const { data, error } = await (await sb()).rpc("create_guild", { guild_name: name.trim(), guild_tag: tag.trim() });
+  if (error) throw new Error(guildError(error));
+  return data;
+}
+
+/** Founder only: change the guild's name and/or tag. */
+export async function updateGuild(id, { name, tag }) {
+  const { error } = await (await sb()).from("guilds").update({ name: name.trim(), tag: tag.trim() }).eq("id", id);
+  if (error) throw new Error(guildError(error));
+}
+
+export async function leaveGuild(id) {
+  const { error } = await (await sb()).rpc("leave_guild", { g: id });
+  if (error) throw new Error(friendly(error));
+}
+
+export async function removeGuildMember(id, person) {
+  const { error } = await (await sb()).rpc("remove_guild_member", { g: id, person });
+  if (error) throw new Error(friendly(error));
+}
+
+export async function inviteToGuild(id, friendId) {
+  const user = await currentUser();
+  if (!user) throw new Error("Connect first.");
+  const { error } = await (await sb()).from("guild_invites").insert({ guild_id: id, inviter: user.id, invitee: friendId });
+  if (error) throw new Error(error.code === "23505" ? "They've already been invited to this guild." : guildError(error));
+}
+
+export async function acceptGuildInvite(inviteId) {
+  const { error } = await (await sb()).rpc("accept_guild_invite", { invite_id: inviteId });
+  if (error) throw new Error(guildError(error));
+}
+
+export async function declineGuildInvite(inviteId) {
+  const { error } = await (await sb()).from("guild_invites").delete().eq("id", inviteId);
+  if (error) throw new Error(friendly(error));
 }

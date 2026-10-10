@@ -7,6 +7,7 @@
 
 import { api, h, toast, saveClip } from "../app.js";
 import * as social from "../social.js";
+import { avatar } from "../components/avatar.js";
 
 const fmtClock = (iso) => new Date(iso).toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 const fmtDay = (iso) => new Date(iso).toLocaleDateString(undefined, { weekday: "short", month: "short", day: "numeric" });
@@ -35,7 +36,7 @@ async function addShared(payload) {
 export async function render(view, { friendId }) {
   view.append(h(`<div class="chat">
     <div class="chat-head"><a class="btn ghost" href="#/friends" title="Back">←</a>
-      <span class="avatar" id="chat-avatar"></span><strong id="chat-name">…</strong></div>
+      <span id="chat-avatar"></span><strong id="chat-name">…</strong><span class="small muted" id="chat-online"></span></div>
     <div class="chat-note small muted">👻 Messages disappear after they're seen · voice notes after they're played</div>
     <div class="chat-list" id="chat-list"><p class="muted" style="text-align:center">Loading…</p></div>
     <form class="chat-compose" id="compose">
@@ -62,11 +63,14 @@ export async function render(view, { friendId }) {
   player.addEventListener("ended", () => { if (playingBtn) playingBtn.textContent = playingBtn.dataset.label; playingBtn = null; });
 
   // Friend's name (only friends can be messaged; anyone else just sees an empty chat).
-  social.sb().then((c) => c.from("profiles").select("username").eq("id", friendId).maybeSingle()).then(({ data }) => {
+  social.sb().then((c) => c.from("profiles").select("username, avatar_path").eq("id", friendId).maybeSingle()).then(async ({ data }) => {
     if (disposed) return;
     const name = (data && data.username) || "Friend";
+    const online = (await social.onlineAmong([friendId])).has(friendId);
+    if (disposed) return;
     $("#chat-name").textContent = name;
-    $("#chat-avatar").textContent = name[0].toUpperCase();
+    $("#chat-online").textContent = online ? "online" : "";
+    $("#chat-avatar").replaceChildren(avatar({ username: name, avatar_path: data && data.avatar_path }, { online }));
   }).catch(() => {});
 
   function bubble(m) {

@@ -17,13 +17,30 @@ export async function render(view, { query }) {
   const q = query.get("q") || "";
   const input = document.querySelector("#global-search input");
   if (input) input.value = q;
-  view.append(h(`<div class="page">
+  view.append(h(`<div class="page search-page">
     <h1>Search</h1>
+    <form class="search-form row" id="search-form" role="search">
+      <input type="search" name="q" placeholder="Search all transcripts… ابحث" aria-label="Search all transcripts"
+        autocomplete="off" dir="auto">
+      <button type="submit" class="primary">Search</button>
+    </form>
     <p class="muted small">Matches ignore diacritics (tashkeel) and spelling variants of alef (أ إ آ ا), taa marbuta/haa (ة ه) and alef maqsura/yaa (ى ي). Transcripts are always shown exactly as transcribed.</p>
     <div id="results" class="results"></div>
   </div>`));
   const box = view.querySelector("#results");
-  if (!q) { box.append(h(`<div class="empty">Type in the search box above.</div>`)); return; }
+  // The page has its own search box (the phone has no search bar in its header).
+  const form = view.querySelector("#search-form");
+  form.q.value = q;
+  form.onsubmit = (e) => {
+    e.preventDefault();
+    const next = form.q.value.trim();
+    if (next && next !== q) location.hash = `#/search?q=${encodeURIComponent(next)}`;
+  };
+  if (!q) {
+    form.q.focus();
+    box.append(h(`<div class="empty">Search every transcript, video and web page you've added.</div>`));
+    return;
+  }
   const data = await api(`/search?q=${encodeURIComponent(q)}`);
   if (!data.results.length) {
     box.append(h(`<div class="empty">No matches for “${esc(q)}”.</div>`));
@@ -39,9 +56,11 @@ export async function render(view, { query }) {
     const g = h(`<div class="ep-group card">
       <div style="margin-bottom:6px"><strong dir="auto">${esc(hits[0].episode_title)}</strong>
       <span class="small muted"> · ${esc(hits[0].feed_title)}</span></div></div>`);
+    // In an imported web page a hit's "time" is a word position, not a moment in a recording.
+    const isPage = hits[0].feed_title === "My webpages";
     for (const r of hits) {
       g.append(h(`<a class="hit" href="#/episode/${epId}?t=${r.start}">
-        <span class="t">${formatTime(r.start)}</span>
+        <span class="t">${isPage ? "🌐" : formatTime(r.start)}</span>
         <span class="ar" dir="rtl" lang="ar">${withSpans(r.text, r.spans)}</span></a>`));
     }
     box.append(g);

@@ -86,7 +86,7 @@ function renderPending(view, ep) {
 export async function render(view, { id, query }) {
   const data = await api(`/episodes/${id}/transcript`);
   const ep = data.episode;
-  if (reader.isPage(ep) && data.words.text.length) return reader.render(view, { id, data });
+  if (reader.isPage(ep) && data.words.text.length) return reader.render(view, { id, data, query });
   if (ep.status !== "done" || !data.words.start.length) return renderPending(view, ep);
 
   const W = data.words;

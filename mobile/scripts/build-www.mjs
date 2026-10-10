@@ -34,6 +34,7 @@ const SHARED = [
   "js/extract.js",
   "js/pageimport.js",
   "js/components/studycard.js",
+  "js/components/avatar.js",
 ];
 
 rmSync(out, { recursive: true, force: true });

@@ -11,6 +11,7 @@ import * as welcome from "./pages/welcome.js";
 import * as friends from "./pages/friends.js";
 import * as chat from "./pages/chat.js";
 import { startBadge } from "./social.js";
+import { initSwipe } from "./swipe.js";
 import { addUploadedVideo, handle } from "./backend.js";
 import { accessToken, drive } from "./drive.js";
 import { App, Filesystem, GoogleDriveAuth, NativeHttp, Share, isNative } from "./native.js";
@@ -377,6 +378,8 @@ async function route() {
     : mod === settingsPage ? "settings" : mod === friends || mod === chat ? "friends" : "";
   document.querySelectorAll("[data-nav]").forEach((a) => a.classList.toggle("active", a.dataset.nav === key));
   document.body.classList.toggle("in-player", mod === player || mod === chat);
+  // The tab highlight and swipe animation move as soon as the section changes, not after its data loads.
+  window.dispatchEvent(new Event("routed"));
   try {
     cleanup = (await mod.render(view, { ...params(path.match(re)), query: new URLSearchParams(qs || "") })) || null;
   } catch (e) {
@@ -393,6 +396,7 @@ async function boot() {
   applySettings(settings);
   if (!settings.welcome_seen) location.hash = "#/welcome";
   window.addEventListener("hashchange", route);
+  initSwipe();
   route();
   startBadge();
 
