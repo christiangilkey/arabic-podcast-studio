@@ -7,6 +7,8 @@ import * as search from "./pages/search.js";
 import * as settings from "./pages/settings.js";
 import * as about from "./pages/about.js";
 import * as welcome from "./pages/welcome.js";
+import * as friends from "./pages/friends.js";
+import { startBadge } from "./social.js";
 
 // ---------- API ----------
 export async function api(path, { method = "GET", body, raw } = {}) {
@@ -202,6 +204,7 @@ const routes = [
   [/^search$/, search, () => ({})],
   [/^settings$/, settings, () => ({})],
   [/^about$/, about, () => ({})],
+  [/^friends$/, friends, () => ({})],
   [/^welcome$/, welcome, () => ({ step: "welcome" })],
   [/^setup$/, welcome, () => ({ step: "setup" })],
 ];
@@ -228,7 +231,8 @@ async function route() {
   }
   if (!match) { location.hash = "#/"; return; }
   const [mod, params] = match;
-  const navKey = mod === library ? "library" : mod === vocab ? "vocab" : mod === settings ? "settings" : mod === about ? "about" : "";
+  const navKey = mod === library ? "library" : mod === vocab ? "vocab" : mod === settings ? "settings"
+    : mod === about ? "about" : mod === friends ? "friends" : "";
   document.querySelectorAll("[data-nav]").forEach((a) => a.classList.toggle("active", a.dataset.nav === navKey));
   try {
     cleanup = (await mod.render(view, params)) || null;
@@ -290,6 +294,7 @@ async function boot() {
   }
   window.addEventListener("hashchange", route);
   route();
+  startBadge();
 }
 
 boot();

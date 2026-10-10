@@ -502,3 +502,14 @@ mark { background: var(--hl); color: var(--hl-ink); border-radius: 3px; padding:
 .item-folders:empty { display: none; }
 .tag { font-size: 12px; padding: 1px 8px; border-radius: 99px; background: var(--surface-2); color: var(--muted); }
 .vocab-item .pick { margin-top: 10px; }
+
+/* ---------- friends ---------- */
+.nav-count { display: inline-block; min-width: 18px; padding: 0 5px; margin-left: 4px; border-radius: 99px; background: var(--danger); color: #fff; font-size: 11px; line-height: 18px; text-align: center; font-weight: 600; }
+.tabbar .nav-count { position: absolute; top: 2px; margin-left: 14px; }
+.friends-page .card { margin-bottom: 12px; }
+.add-friend label { white-space: nowrap; }
+.friend-row { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-top: 1px solid var(--border); }
+.friend-row:first-of-type { border-top: none; }
+.friend-row .avatar { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; background: var(--accent-soft); color: var(--accent); font-weight: 700; flex: none; }
+.friend-row .name { font-weight: 600; overflow: hidden; text-overflow: ellipsis; }
+.empty-state { text-align: center; padding: 28px 18px; }

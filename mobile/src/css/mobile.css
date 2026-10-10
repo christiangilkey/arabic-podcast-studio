@@ -51,3 +51,4 @@ body.in-player .tabbar { display: none; }
 .toasts { left: 12px; right: 12px; bottom: calc(70px + env(safe-area-inset-bottom)); }
 .toast { max-width: none; }
 button, .btn { min-height: 38px; }
+.tabbar a { position: relative; }

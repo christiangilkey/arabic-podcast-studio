@@ -26,6 +26,7 @@ const SHARED = [
   "js/pages/player.js",
   "js/pages/vocab.js",
   "js/pages/search.js",
+  "js/pages/friends.js",
 ];
 
 rmSync(out, { recursive: true, force: true });

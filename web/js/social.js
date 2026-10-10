@@ -110,3 +110,117 @@ export async function setUsername(name) {
     throw new Error(friendly(error));
   }
 }
+
+// ---------------------------------------------------------------- friends
+
+/** {me, friends, incoming, outgoing}: each entry {id: friendship id, user: {id, username}, since}. */
+export async function friendsState() {
+  const c = await sb();
+  const me = await myProfile();
+  if (!me) return null;
+  const { data: rows, error } = await c.from("friendships").select("id, requester, addressee, status, created_at")
+    .order("created_at", { ascending: false });
+  if (error) throw new Error(friendly(error));
+  const otherIds = [...new Set(rows.map((r) => (r.requester === me.id ? r.addressee : r.requester)))];
+  const names = new Map();
+  if (otherIds.length) {
+    const { data: people, error: e2 } = await c.from("profiles").select("id, username").in("id", otherIds);
+    if (e2) throw new Error(friendly(e2));
+    for (const p of people) names.set(p.id, p.username || "(no username yet)");
+  }
+  const entry = (r) => {
+    const other = r.requester === me.id ? r.addressee : r.requester;
+    return { id: r.id, user: { id: other, username: names.get(other) || "(unknown)" }, since: r.created_at };
+  };
+  const friends = rows.filter((r) => r.status === "accepted").map(entry)
+    .sort((a, b) => a.user.username.localeCompare(b.user.username));
+  const incoming = rows.filter((r) => r.status === "pending" && r.addressee === me.id).map(entry);
+  const outgoing = rows.filter((r) => r.status === "pending" && r.requester === me.id).map(entry);
+  return { me, friends, incoming, outgoing };
+}
+
+/** Send a friend request by username. If they already asked you, this accepts theirs. */
+export async function addFriend(username) {
+  const name = username.trim().replace(/^@/, "");
+  if (!name) throw new Error("Type your friend's username.");
+  const c = await sb();
+  const me = await myProfile();
+  if (!me) throw new Error("Connect first (Settings → Friends & sharing).");
+  if (!me.username) throw new Error("Choose your own username first (Settings → Friends & sharing).");
+  const { data: found, error } = await c.from("profiles").select("id, username").eq("username", name).limit(1);
+  if (error) throw new Error(friendly(error));
+  if (!found.length) throw new Error(`Nobody is called “${name}”. Usernames are exact (but not case-sensitive).`);
+  const them = found[0];
+  if (them.id === me.id) throw new Error("That's you!");
+  const { data: existing } = await c.from("friendships").select("id, requester, status")
+    .or(`and(requester.eq.${me.id},addressee.eq.${them.id}),and(requester.eq.${them.id},addressee.eq.${me.id})`);
+  const prior = existing && existing[0];
+  if (prior) {
+    if (prior.status === "accepted") throw new Error(`You and ${them.username} are already friends.`);
+    if (prior.requester === me.id) throw new Error(`You already sent ${them.username} a request.`);
+    await acceptFriend(prior.id);
+    return { accepted: true, username: them.username };
+  }
+  const { error: e2 } = await c.from("friendships").insert({ requester: me.id, addressee: them.id });
+  if (e2) throw new Error(e2.code === "23505" ? `You and ${them.username} already have a request pending.` : friendly(e2));
+  return { accepted: false, username: them.username };
+}
+
+export async function acceptFriend(friendshipId) {
+  const { error } = await (await sb()).rpc("accept_friend", { request_id: friendshipId });
+  if (error) throw new Error(friendly(error));
+}
+
+/** Decline a request, cancel your own, or unfriend. */
+export async function removeFriendship(friendshipId) {
+  const { error } = await (await sb()).from("friendships").delete().eq("id", friendshipId);
+  if (error) throw new Error(friendly(error));
+}
+
+// ---------------------------------------------------------------- live updates + badge
+
+/** Call `handler` whenever friend requests, shares or quiz invites change. Returns an unsubscribe. */
+export async function onActivity(handler) {
+  const user = await currentUser();
+  if (!user) return () => {};
+  const c = await sb();
+  const channel = c.channel(`activity-${user.id}-${Math.random().toString(36).slice(2, 8)}`);
+  for (const table of ["friendships", "shares", "game_invites"]) {
+    channel.on("postgres_changes", { event: "*", schema: "public", table }, () => handler(table));
+  }
+  channel.subscribe();
+  return () => { c.removeChannel(channel); };
+}
+
+/** Things waiting for you (friend requests now; shares and quiz invites as they arrive). */
+export async function pendingCount() {
+  const user = await currentUser();
+  if (!user) return 0;
+  const c = await sb();
+  const counts = await Promise.all([
+    c.from("friendships").select("id", { count: "exact", head: true }).eq("addressee", user.id).eq("status", "pending"),
+    c.from("shares").select("id", { count: "exact", head: true }).eq("recipient", user.id),
+    c.from("game_invites").select("id", { count: "exact", head: true }).eq("invitee", user.id),
+  ]);
+  return counts.reduce((n, r) => n + (r.count || 0), 0);
+}
+
+let badgeStarted = false;
+/** Keep the number on the Friends tab up to date (call once at startup). */
+export function startBadge() {
+  if (badgeStarted) return;
+  badgeStarted = true;
+  const paint = async () => {
+    const n = await pendingCount().catch(() => 0);
+    document.querySelectorAll('[data-nav="friends"] .nav-count').forEach((el) => {
+      el.textContent = n ? String(n) : "";
+      el.hidden = !n;
+    });
+  };
+  let off = () => {};
+  const watch = async () => { off(); off = await onActivity(paint).catch(() => () => {}); paint(); };
+  sb().then((c) => c.auth.onAuthStateChange((event) => {
+    if (event === "SIGNED_IN" || event === "SIGNED_OUT" || event === "INITIAL_SESSION") setTimeout(watch, 0);
+  })).catch(() => {});
+  setInterval(paint, 120000);
+}

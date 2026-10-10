@@ -7,6 +7,8 @@ import * as vocab from "./pages/vocab.js";
 import * as search from "./pages/search.js";
 import * as settingsPage from "./pages/settings.js";
 import * as welcome from "./pages/welcome.js";
+import * as friends from "./pages/friends.js";
+import { startBadge } from "./social.js";
 import { addUploadedVideo, handle } from "./backend.js";
 import { accessToken, drive } from "./drive.js";
 import { App, Filesystem, GoogleDriveAuth, Share, isNative } from "./native.js";
@@ -246,6 +248,7 @@ const routes = [
   [/^search$/, search, () => ({})],
   [/^settings$/, settingsPage, () => ({})],
   [/^welcome$/, welcome, () => ({})],
+  [/^friends$/, friends, () => ({})],
 ];
 let cleanup = null;
 
@@ -260,7 +263,8 @@ async function route() {
   const hit = routes.find(([re]) => re.test(path));
   if (!hit) { location.hash = "#/"; return; }
   const [re, mod, params] = hit;
-  const key = mod === library ? "library" : mod === vocab ? "vocab" : mod === search ? "search" : mod === settingsPage ? "settings" : "";
+  const key = mod === library ? "library" : mod === vocab ? "vocab" : mod === search ? "search"
+    : mod === settingsPage ? "settings" : mod === friends ? "friends" : "";
   document.querySelectorAll("[data-nav]").forEach((a) => a.classList.toggle("active", a.dataset.nav === key));
   document.body.classList.toggle("in-player", mod === player);
   try {
@@ -280,6 +284,7 @@ async function boot() {
   if (!settings.welcome_seen) location.hash = "#/welcome";
   window.addEventListener("hashchange", route);
   route();
+  startBadge();
 
   // Sync on start, when returning to the app, and every 5 minutes while open.
   let lastDone = new Set(lib.episodes.filter((e) => e.transcript_rev).map((e) => e.uid));
