@@ -40,7 +40,7 @@ def _page(title: str, message: str, ok: bool) -> HTMLResponse:
     return HTMLResponse(f"""<!doctype html><meta charset="utf-8"><title>{html.escape(title)}</title>
 <body style="font:16px system-ui;display:grid;place-items:center;height:90vh;background:#f7f6f2">
 <div style="max-width:440px;text-align:center"><h2 style="color:{color}">{html.escape(title)}</h2>
-<p>{html.escape(message)}</p><p style="color:#6b6860">You can close this tab and return to Arabic Podcast Studio.</p></div>""")
+<p>{html.escape(message)}</p><p style="color:#6b6860">You can close this tab and return to Tamkeen.</p></div>""")
 
 
 @router.get("/callback", include_in_schema=False)

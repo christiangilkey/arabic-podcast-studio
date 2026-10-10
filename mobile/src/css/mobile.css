@@ -52,3 +52,11 @@ body.in-player .tabbar { display: none; }
 .toast { max-width: none; }
 button, .btn { min-height: 38px; }
 .tabbar a { position: relative; }
+
+/* ---------- Tamkeen: labelled bottom tabs, easy to reach and read ---------- */
+.tabbar { box-shadow: 0 -6px 20px rgba(0, 0, 0, .08); border-top: none; }
+.tabbar a { padding: 8px 0 9px; font-size: 11.5px; transition: transform .08s ease, color .12s ease; }
+.tabbar .ico { font-size: 20px; width: 52px; height: 28px; border-radius: 99px; display: grid; place-items: center; transition: background-color .15s ease; }
+.tabbar a.active .ico { background: var(--accent-soft); }
+.tabbar .nav-count { top: 3px; margin-left: 22px; }
+.brand span { font-size: 17px; }

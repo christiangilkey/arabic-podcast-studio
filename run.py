@@ -1,4 +1,4 @@
-"""Start Arabic Podcast Studio.
+"""Start Tamkeen.
 
     python run.py              # native window
     python run.py --browser    # open in your default browser instead
@@ -15,7 +15,7 @@ import sys
 
 def main() -> int:
     multiprocessing.freeze_support()
-    parser = argparse.ArgumentParser(description="Arabic Podcast Studio")
+    parser = argparse.ArgumentParser(description="Tamkeen")
     parser.add_argument("--browser", action="store_true", help="open in the default browser instead of a window")
     parser.add_argument("--server", action="store_true", help="run only the local server (no window or browser)")
     parser.add_argument("--port", type=int, default=None, help="fixed port (default: a free one)")

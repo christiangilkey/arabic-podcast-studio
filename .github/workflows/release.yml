@@ -121,13 +121,13 @@ jobs:
       - name: Smoke test (macOS, MLX on Metal)
         if: matrix.target == 'macos'
         continue-on-error: true   # CI VMs may not expose Metal; real Macs do
-        run: env PATH=/usr/bin:/bin "dist/Arabic Podcast Studio.app/Contents/MacOS/ArabicPodcastStudio" --smoke-test
+        run: env PATH=/usr/bin:/bin "dist/Tamkeen.app/Contents/MacOS/ArabicPodcastStudio" --smoke-test
 
       - name: Smoke test (macOS, faster-whisper CPU)
         if: matrix.target == 'macos'
         run: |
           rm -rf "$APS_DATA_DIR"
-          env PATH=/usr/bin:/bin APS_ENGINE=faster-whisper "dist/Arabic Podcast Studio.app/Contents/MacOS/ArabicPodcastStudio" --smoke-test
+          env PATH=/usr/bin:/bin APS_ENGINE=faster-whisper "dist/Tamkeen.app/Contents/MacOS/ArabicPodcastStudio" --smoke-test
 
       - name: Smoke test (Linux)
         if: matrix.target == 'linux'
@@ -152,7 +152,7 @@ jobs:
           bash packaging/linux/make_appimage.sh "$VERSION"
           rm -rf "$APS_DATA_DIR"
           env -i HOME="$HOME" PATH=/usr/bin:/bin APS_DATA_DIR="$APS_DATA_DIR" \
-            dist/ArabicPodcastStudio-*.AppImage --appimage-extract-and-run --smoke-test
+            dist/Tamkeen-*.AppImage --appimage-extract-and-run --smoke-test
 
       - uses: actions/upload-artifact@v4
         with:

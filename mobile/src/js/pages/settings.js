@@ -49,13 +49,16 @@ export async function render(view) {
       <div class="row">Theme:
         ${["system", "light", "dark"].map((t) => `<label class="switch"><input type="radio" name="theme" value="${t}" ${s.theme === t ? "checked" : ""}> ${t[0].toUpperCase() + t.slice(1)}</label>`).join("")}
       </div>
+      <label class="check"><input type="checkbox" id="haptics" ${s.haptics !== false ? "checked" : ""}>
+        <span>Vibrate lightly when I tap a word or save one</span></label>
       <div class="row">Text size: <input type="range" id="font" min="16" max="48" value="${s.font_size}" style="flex:1"> <span id="font-val">${s.font_size}px</span></div>
       <div class="ar" dir="rtl" style="font-size:var(--ar-size);line-height:2">مَرْحَبًا بِكُمْ فِي البودكاست</div>
     </section>
 
-    <section class="card small muted">Arabic Podcast Studio for Android · <a href="https://christiangilkey.github.io/arabic-podcast-studio/privacy.html" target="_blank" rel="noopener">Privacy policy</a></section>
+    <section class="card small muted">Tamkeen for Android · <a href="https://christiangilkey.github.io/tamkeen/privacy.html" target="_blank" rel="noopener">Privacy policy</a></section>
   </div>`));
   const $ = (q) => view.querySelector(q);
+  $("#haptics").onchange = (e) => saveSettings({ haptics: e.target.checked });
   $("#account").closest("section").after(accountSection());
 
   function paintAccount(st = syncState) {

@@ -1,6 +1,7 @@
 // Phone app shell. Same exports as the desktop's web/js/app.js, so the shared screens
 // (library, player, vocab, search) import from "../app.js" and work unchanged.
 
+import * as home from "./pages/home.js";
 import * as library from "./pages/library.js";
 import * as player from "./pages/player.js";
 import * as vocab from "./pages/vocab.js";
@@ -108,6 +109,14 @@ export async function googleIdToken() {
   const hashed = Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
   const r = await GoogleDriveAuth.getIdToken({ serverClientId: WEB_CLIENT_ID, nonce: hashed });
   return { token: r.idToken, nonce };
+}
+
+// ---------- feedback ----------
+/** A short vibration for an action: "tick" for small things, "success" for a saved word.
+ * Can be switched off in Settings (many people prefer none). */
+export function buzz(kind = "tick") {
+  if (settings.haptics === false || !navigator.vibrate) return;
+  try { navigator.vibrate(kind === "success" ? [14, 50, 22] : 8); } catch { /* not supported */ }
 }
 
 // ---------- web pages ----------
@@ -290,7 +299,8 @@ document.addEventListener("pointerdown", (e) => { if (!e.target.closest("#ctxmen
 
 // ---------- router ----------
 const routes = [
-  [/^$/, library, () => ({})],
+  [/^$/, home, () => ({})],
+  [/^library$/, library, () => ({})],
   [/^feed\/(\w+)$/, library, (m) => ({ feedId: m[1] })],
   [/^episode\/(\w+)$/, player, (m) => ({ id: m[1] })],
   [/^vocab$/, vocab, () => ({})],
@@ -313,7 +323,7 @@ async function route() {
   const hit = routes.find(([re]) => re.test(path));
   if (!hit) { location.hash = "#/"; return; }
   const [re, mod, params] = hit;
-  const key = mod === library ? "library" : mod === vocab ? "vocab" : mod === search ? "search"
+  const key = mod === home ? "home" : mod === library ? "library" : mod === vocab ? "vocab" : mod === search ? "search"
     : mod === settingsPage ? "settings" : mod === friends || mod === chat ? "friends" : "";
   document.querySelectorAll("[data-nav]").forEach((a) => a.classList.toggle("active", a.dataset.nav === key));
   document.body.classList.toggle("in-player", mod === player || mod === chat);

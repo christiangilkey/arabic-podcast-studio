@@ -19,7 +19,7 @@ MANIFEST = "aps-backup.json"
 
 
 def export(include_audio: bool) -> Path:
-    out = paths.tmp_dir() / f"arabic-podcast-studio-backup-{time.strftime('%Y%m%d-%H%M%S')}.zip"
+    out = paths.tmp_dir() / f"tamkeen-backup-{time.strftime('%Y%m%d-%H%M%S')}.zip"
     snapshot = paths.tmp_dir() / "library-snapshot.db"
     snapshot.unlink(missing_ok=True)
     src = db.connect()
@@ -52,7 +52,7 @@ def import_(zip_path: Path) -> dict[str, Any]:
     with zipfile.ZipFile(zip_path) as zf:
         names = zf.namelist()
         if MANIFEST not in names or "library.db" not in names:
-            raise ValueError("This file isn't an Arabic Podcast Studio backup.")
+            raise ValueError("This file isn't a Tamkeen backup.")
         with tempfile.TemporaryDirectory(dir=paths.tmp_dir()) as tmp:
             zf.extract("library.db", tmp)
             incoming = Path(tmp) / "library.db"

@@ -82,7 +82,7 @@ jobs:
           grep -qi "SHA-1 digest: ac3a1ec9d5b95a23a23384bf1eb68b97fb368541" "$RUNNER_TEMP/certs.txt" \
             || { echo "::error::APK isn't signed with the expected release key"; exit 1; }
           mkdir -p dist
-          cp "$APK" "dist/ArabicPodcastStudio-${APP_VERSION}-Android.apk"
+          cp "$APK" "dist/Tamkeen-${APP_VERSION}-Android.apk"
 
       - uses: actions/upload-artifact@v4
         with:

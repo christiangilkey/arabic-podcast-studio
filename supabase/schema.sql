@@ -1,4 +1,4 @@
--- Arabic Podcast Studio: social features (friends, sharing, shared folders, live quiz invites).
+-- Tamkeen: social features (friends, sharing, shared folders, live quiz invites).
 --
 -- Everything else (library, transcripts, private vocab) stays in each user's own Google Drive.
 -- Run in the Supabase SQL editor. Safe to re-run: every statement is idempotent.

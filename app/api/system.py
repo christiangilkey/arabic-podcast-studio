@@ -175,7 +175,7 @@ def check_updates() -> dict[str, Any]:
 
 
 LICENSES = [
-    ("Arabic Podcast Studio", "MIT", "app.txt"),
+    ("Tamkeen", "MIT", "app.txt"),
     ("OpenAI Whisper (model weights & architecture)", "MIT", "whisper.txt"),
     ("faster-whisper", "MIT", "faster-whisper.txt"),
     ("CTranslate2", "MIT", "ctranslate2.txt"),

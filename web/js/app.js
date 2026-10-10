@@ -1,5 +1,6 @@
 // App shell: API client, live events (SSE), router, toasts, theme, downloads.
 
+import * as home from "./pages/home.js";
 import * as library from "./pages/library.js";
 import * as player from "./pages/player.js";
 import * as vocab from "./pages/vocab.js";
@@ -136,6 +137,10 @@ export async function googleIdToken() {
   return { token: r.token };
 }
 
+/** Small physical feedback for an action ("tick" or "success"). Phones vibrate; a computer
+ * has nothing to vibrate, so this does nothing here (the visual feedback is in the styles). */
+export function buzz() {}
+
 /** Download a web page for "Add a webpage": {url, html}. The desktop's server fetches it. */
 export async function fetchPage(url) {
   return api(`/web/fetch?url=${encodeURIComponent(url)}`);
@@ -216,7 +221,8 @@ export async function saveSettings(values) {
 
 // ---------- router ----------
 const routes = [
-  [/^$/, library, () => ({})],
+  [/^$/, home, () => ({})],
+  [/^library$/, library, () => ({})],
   [/^feed\/(\d+)$/, library, (m) => ({ feedId: Number(m[1]) })],
   [/^episode\/(\d+)$/, player, (m) => ({ id: Number(m[1]) })],
   [/^vocab$/, vocab, () => ({})],
@@ -251,7 +257,7 @@ async function route() {
   }
   if (!match) { location.hash = "#/"; return; }
   const [mod, params] = match;
-  const navKey = mod === library ? "library" : mod === vocab ? "vocab" : mod === settings ? "settings"
+  const navKey = mod === home ? "home" : mod === library ? "library" : mod === vocab ? "vocab" : mod === settings ? "settings"
     : mod === about ? "about" : mod === friends || mod === chat ? "friends" : "";
   document.querySelectorAll("[data-nav]").forEach((a) => a.classList.toggle("active", a.dataset.nav === navKey));
   try {

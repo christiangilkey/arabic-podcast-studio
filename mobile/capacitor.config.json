@@ -1,6 +1,6 @@
 {
   "appId": "io.github.christiangilkey.arabicpodcaststudio",
-  "appName": "Arabic Podcast Studio",
+  "appName": "Tamkeen",
   "webDir": "www",
   "android": {
     "allowMixedContent": false

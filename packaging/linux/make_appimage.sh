@@ -7,7 +7,7 @@ set -euo pipefail
 VERSION="${1:?version required}"
 SRC="dist/ArabicPodcastStudio"
 APPDIR="dist/AppDir"
-OUT="dist/ArabicPodcastStudio-${VERSION}-Linux-x86_64.AppImage"
+OUT="dist/Tamkeen-${VERSION}-Linux-x86_64.AppImage"
 
 [ -d "$SRC" ] || { echo "Missing $SRC. Run pyinstaller first." >&2; exit 1; }
 
@@ -20,8 +20,8 @@ cp packaging/icons/icon-256.png "$APPDIR/arabic-podcast-studio.png"
 cat > "$APPDIR/arabic-podcast-studio.desktop" <<'EOF'
 [Desktop Entry]
 Type=Application
-Name=Arabic Podcast Studio
-Comment=Study Arabic podcasts with word-level transcripts
+Name=Tamkeen
+Comment=Study Arabic with podcasts, videos and web pages, word by word
 Exec=ArabicPodcastStudio
 Icon=arabic-podcast-studio
 Categories=Education;Languages;AudioVideo;

@@ -3,9 +3,9 @@
 #   packaging/macos/make_dmg.sh 0.1.0
 set -euo pipefail
 VERSION="${1:?version required}"
-APP="dist/Arabic Podcast Studio.app"
+APP="dist/Tamkeen.app"
 STAGE="dist/dmg"
-OUT="dist/ArabicPodcastStudio-${VERSION}-macOS-AppleSilicon.dmg"
+OUT="dist/Tamkeen-${VERSION}-macOS-AppleSilicon.dmg"
 
 [ -d "$APP" ] || { echo "Missing $APP. Run pyinstaller first." >&2; exit 1; }
 
@@ -18,6 +18,6 @@ mkdir -p "$STAGE"
 cp -R "$APP" "$STAGE/"
 ln -s /Applications "$STAGE/Applications"
 cp README.md "$STAGE/Read Me.md" 2>/dev/null || true
-hdiutil create -volname "Arabic Podcast Studio" -srcfolder "$STAGE" -ov -format UDZO "$OUT"
+hdiutil create -volname "Tamkeen" -srcfolder "$STAGE" -ov -format UDZO "$OUT"
 rm -rf "$STAGE"
 echo "Built $OUT"

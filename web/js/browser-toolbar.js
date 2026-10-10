@@ -36,7 +36,7 @@
   back.title = "Back";
   fwd.title = "Forward";
   reload.title = "Reload";
-  imp.title = "Save this page to Arabic Podcast Studio, to read with clickable words";
+  imp.title = "Save this page to Tamkeen, to read with clickable words";
   input.type = "text";
   input.spellcheck = false;
   input.placeholder = "Search or type a web address";

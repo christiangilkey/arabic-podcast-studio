@@ -1,6 +1,6 @@
-# PyInstaller spec for Arabic Podcast Studio (one-folder build on every platform).
+# PyInstaller spec for Tamkeen (one-folder build on every platform).
 #   pyinstaller packaging/app.spec --noconfirm
-# Produces dist/ArabicPodcastStudio/ (Windows, Linux) or dist/Arabic Podcast Studio.app (macOS).
+# Produces dist/ArabicPodcastStudio/ (Windows, Linux) or dist/Tamkeen.app (macOS).
 
 import sys
 from pathlib import Path

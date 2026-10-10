@@ -5,7 +5,8 @@
 // Performance: words are rendered once as <span>s. Each animation frame we binary-search
 // the sorted start times (O(log n)) and only touch the DOM when the active word changes.
 
-import { api, esc, h, on, toast, showMenu, hideMenu, download, saveSettings, state, requestNotifications, audioUrl } from "../app.js";
+import { api, esc, h, on, toast, showMenu, hideMenu, download, saveSettings, state, requestNotifications, audioUrl, buzz } from "../app.js";
+import { saveProgress } from "../progress.js";
 import { activeWordIndex, sentenceBounds, formatTime } from "../wordlookup.js";
 import { statusInfo, isVideo } from "./library.js";
 import { createWordBubble } from "../components/wordbubble.js";
@@ -46,7 +47,7 @@ function renderPending(view, ep) {
       <div class="progress" id="bar" hidden><i></i></div>
       <p class="err" id="err" style="color:var(--danger)"></p>
       <div class="row" style="justify-content:center"><button class="primary" id="go" type="button"></button>
-      <a class="btn" href="#/">Back to library</a></div>
+      <a class="btn" href="#/library">Back to library</a></div>
     </div></div>`);
   panel.querySelector("h1").textContent = ep.title;
   if (isVideo(ep)) {
@@ -278,17 +279,23 @@ export async function render(view, { id, query }) {
       if (s !== lastSecond) {
         lastSecond = s;
         $("#cur").textContent = formatTime(t);
-        if (s % 5 === 0) lsSet(posKey, t);
+        if (s % 5 === 0) { lsSet(posKey, t); remember(); }
       }
     }
   }
   const kick = () => { if (!raf) raf = requestAnimationFrame(tick); };
+  // For Home's "Continue" button: how far through this is.
+  const remember = () => {
+    if (!duration) return;
+    saveProgress({ id, kind: vid ? "video" : "audio", title: ep.title, sub: ep.feed_title, image: img || "",
+                   pos: audio.currentTime || 0, dur: duration });
+  };
   audio.addEventListener("timeupdate", update);
 
   audio.addEventListener("play", () => { if (!disposed) { $("#play").textContent = "❚❚"; kick(); } });
   audio.addEventListener("pause", () => {
     clipEnd = null; // any pause ends a word/sentence clip, so the next play continues normally
-    if (!disposed) { $("#play").textContent = "▶"; lsSet(posKey, audio.currentTime); kick(); }
+    if (!disposed) { $("#play").textContent = "▶"; lsSet(posKey, audio.currentTime); remember(); kick(); }
   });
   audio.addEventListener("seeked", () => { if (!disposed) kick(); });
   audio.addEventListener("ended", () => { if (!disposed) $("#play").textContent = "▶"; });
@@ -531,6 +538,7 @@ export async function render(view, { id, query }) {
   function defineAt(i, j = i, anchor = null) {
     const c = contextFor(i, j);
     bubbleTarget = { i, j, si: c.si, sj: c.sj, text: c.word };
+    buzz("tick");
     playClip(starts[i], ends[j]);
     bubble.show(anchor || wordEls[i], c.ctx);
   }
@@ -659,6 +667,7 @@ export async function render(view, { id, query }) {
     window.removeEventListener("resize", onResize);
     document.removeEventListener("pointerdown", onOutside);
     lsSet(posKey, audio.currentTime);
+    remember();
     audio.pause();
     delete window.__apsAudio;
     audio.removeAttribute("src");

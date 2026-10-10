@@ -9,25 +9,33 @@
 }
 
 :root {
-  --bg: #f7f6f2;
+  --bg: #f6f4f1;
   --surface: #ffffff;
-  --surface-2: #f0eee8;
-  --border: #e2dfd6;
-  --text: #1d1c1a;
-  --muted: #6b6860;
-  --accent: #0f766e;
+  --surface-2: #efecea;
+  --border: #e1dcd9;
+  --text: #1f1a23;
+  --muted: #6d6672;
+  --accent: #0a7580;
   --accent-ink: #ffffff;
-  --accent-soft: #d5efe9;
+  --accent-soft: #d4edf0;
   --danger: #b42318;
   --danger-soft: #fde7e5;
   --warn: #a15c07;
-  --hl: #fde68a;
-  --hl-ink: #1d1c1a;
-  --sel-range: #e0f2fe;
+  --hl: #f6dc94;
+  --hl-ink: #2a1d00;
+  --sel-range: #dff1f4;
   --shadow: 0 1px 2px rgba(0, 0, 0, .06), 0 4px 16px rgba(0, 0, 0, .06);
-  --radius: 10px;
+  --radius: 14px;
   --ar-size: 26px;
-  --ui-font: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --ui-font: ui-rounded, "SF Pro Rounded", "Nunito", "Segoe UI Variable Text", "Segoe UI", system-ui, -apple-system,
+    Roboto, "Helvetica Neue", Arial, sans-serif;
+  /* Tamkeen's identity, taken from the logo: plum-to-teal gradient, gold wordmark. */
+  --brand-plum: #360032;
+  --brand-teal: #0b8693;
+  --brand-gold: #f1cf7b;
+  --brand-grad: linear-gradient(45deg, #360032 0%, #1b526d 52%, #0b8693 100%);
+  /* The one alert colour: only for things that need attention (requests, unread messages). */
+  --alert: #e5484d;
   --ar-font: "Noto Naskh Arabic", "Geeza Pro", "Arabic Typesetting", "Traditional Arabic", "Segoe UI",
     "Noto Sans Arabic", "DejaVu Sans", serif;
   color-scheme: light;
@@ -35,42 +43,42 @@
 
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
-    --bg: #141413;
-    --surface: #1d1d1b;
-    --surface-2: #262623;
-    --border: #34332f;
-    --text: #ecebe6;
-    --muted: #9c9a92;
-    --accent: #2dd4bf;
-    --accent-ink: #062a26;
-    --accent-soft: #123a35;
+    --bg: #131116;
+    --surface: #1c1a20;
+    --surface-2: #27242c;
+    --border: #37323f;
+    --text: #efebf3;
+    --muted: #a39cae;
+    --accent: #2bb8c6;
+    --accent-ink: #03262b;
+    --accent-soft: #123b42;
     --danger: #f87171;
     --danger-soft: #3b1715;
     --warn: #fbbf24;
-    --hl: #a16207;
-    --hl-ink: #fffbeb;
-    --sel-range: #1e3a5f;
+    --hl: #f1cf7b;
+    --hl-ink: #2a1d00;
+    --sel-range: #173a48;
     --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 4px 16px rgba(0, 0, 0, .3);
     color-scheme: dark;
   }
 }
 
 :root[data-theme="dark"] {
-  --bg: #141413;
-  --surface: #1d1d1b;
-  --surface-2: #262623;
-  --border: #34332f;
-  --text: #ecebe6;
-  --muted: #9c9a92;
-  --accent: #2dd4bf;
-  --accent-ink: #062a26;
-  --accent-soft: #123a35;
+  --bg: #131116;
+  --surface: #1c1a20;
+  --surface-2: #27242c;
+  --border: #37323f;
+  --text: #efebf3;
+  --muted: #a39cae;
+  --accent: #2bb8c6;
+  --accent-ink: #03262b;
+  --accent-soft: #123b42;
   --danger: #f87171;
   --danger-soft: #3b1715;
   --warn: #fbbf24;
-  --hl: #a16207;
-  --hl-ink: #fffbeb;
-  --sel-range: #1e3a5f;
+  --hl: #f1cf7b;
+  --hl-ink: #2a1d00;
+  --sel-range: #173a48;
   --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 4px 16px rgba(0, 0, 0, .3);
   color-scheme: dark;
 }
@@ -599,3 +607,84 @@ mark { background: var(--hl); color: var(--hl-ink); border-radius: 3px; padding:
 .reader-text .w.cur { background: var(--hl); color: var(--hl-ink); }
 .reader-text [dir=auto]:not(:dir(rtl)) { font-family: var(--ui-font); font-size: .78em; line-height: 1.75; }
 @media (max-width: 640px) { .reader-text { padding: 16px 16px 40vh; } }
+
+/* ================================================================ Tamkeen identity
+   A calm neutral base; teal (the owned colour) for actions; gold for highlights and rewards;
+   the logo's plum-to-teal gradient for the header and Home; red only for things that need
+   attention. Rounded shapes throughout. */
+.topbar { background: var(--brand-grad); border-bottom: none; color: #fff; }
+.topbar .brand { color: var(--brand-gold); font-weight: 700; letter-spacing: .01em; font-size: 16px; }
+.topbar .brand img { border-radius: 8px; box-shadow: 0 0 0 1px rgba(255, 255, 255, .18); }
+.topbar .nav a { color: rgba(255, 255, 255, .78); border-radius: 99px; padding: 6px 14px; }
+.topbar .nav a:hover { background: rgba(255, 255, 255, .12); color: #fff; }
+.topbar .nav a.active { background: rgba(255, 255, 255, .18); color: #fff; }
+.topbar .global-search input { background: rgba(255, 255, 255, .14); border-color: transparent; color: #fff; border-radius: 99px; }
+.topbar .global-search input::placeholder { color: rgba(255, 255, 255, .65); }
+.topbar .global-search input:focus-visible { outline-color: var(--brand-gold); background: rgba(255, 255, 255, .2); }
+.top-search { margin-left: auto; color: #fff; padding: 6px 12px; border-radius: 99px; background: rgba(255, 255, 255, .14); font-size: 13px; }
+.top-search:hover { text-decoration: none; background: rgba(255, 255, 255, .22); }
+
+button, .btn { border-radius: 10px; transition: transform .08s ease, background-color .12s ease, filter .12s ease, box-shadow .12s ease; }
+button.primary, .btn.primary { border-radius: 99px; padding-left: 16px; padding-right: 16px; font-weight: 600; }
+/* Every press answers at once: the control dips under your finger. */
+button:active:not(:disabled), .btn:active, .continue-btn:active, .continue-row:active, .choice:active, .tabbar a:active { transform: scale(.96); }
+input[type="text"], input[type="url"], input[type="search"], input[type="password"], select, textarea { border-radius: 10px; }
+.pill, .folder-chip { border-radius: 99px; }
+.progress > i, .continue-bar > i { background: linear-gradient(90deg, var(--accent), var(--brand-gold)); }
+/* The one alert colour, used only on counts of things waiting for you. */
+.nav-count { background: var(--alert); }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}
+
+/* A saved word gets a small celebration: the popup's Save button glows gold. */
+.word-bubble.just-saved [data-act="save"] { animation: saved-pop .7s ease; }
+@keyframes saved-pop {
+  0% { transform: scale(1); box-shadow: 0 0 0 0 rgba(241, 207, 123, .9); }
+  35% { transform: scale(1.12); background: var(--brand-gold); color: #2a1d00; border-color: var(--brand-gold); }
+  100% { transform: scale(1); box-shadow: 0 0 0 18px rgba(241, 207, 123, 0); }
+}
+.toast { border-radius: 14px; animation: toast-in .18s ease; }
+
+/* ---------- Home ---------- */
+.home { max-width: 760px; margin: 0 auto; padding: 20px 16px 32px; display: flex; flex-direction: column; gap: 16px; min-height: 100%; }
+.hero { background: var(--brand-grad); color: #fff; border-radius: 24px; padding: 22px 20px 20px; display: flex; flex-direction: column; gap: 22px; box-shadow: 0 10px 30px rgba(27, 20, 60, .28); }
+.hero-top { display: flex; align-items: center; gap: 14px; }
+.hero-logo { border-radius: 14px; box-shadow: 0 0 0 1px rgba(255, 255, 255, .18); }
+.hero-ar { font-family: var(--ar-font); font-size: 30px; line-height: 1.4; color: var(--brand-gold); }
+.hero-en { opacity: .85; }
+.hero-loading { opacity: .6; padding: 20px 0; text-align: center; }
+.continue-btn { position: relative; display: flex; align-items: center; gap: 16px; padding: 18px 18px 22px; border-radius: 20px; background: var(--brand-gold); color: #2a1d00; overflow: hidden; box-shadow: 0 6px 18px rgba(0, 0, 0, .28); transition: transform .08s ease, filter .12s ease; }
+.continue-btn:hover { text-decoration: none; filter: brightness(1.05); }
+.continue-play { flex: none; width: 56px; height: 56px; border-radius: 50%; display: grid; place-items: center; background: #2a1d00; color: var(--brand-gold); font-size: 22px; padding-left: 4px; }
+.continue-text { display: flex; flex-direction: column; min-width: 0; flex: 1; }
+.continue-verb { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: .06em; opacity: .75; }
+.continue-title { font-size: 19px; font-weight: 700; line-height: 1.35; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; }
+.continue-sub { font-size: 13px; opacity: .8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.continue-bar { position: absolute; left: 0; right: 0; bottom: 0; height: 6px; background: rgba(0, 0, 0, .14); }
+.continue-bar > i { display: block; height: 100%; }
+.continue-btn .continue-bar > i { background: #2a1d00; }
+.home-h { font-size: 13px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 4px 0 0; }
+.continue-row { position: relative; display: flex; align-items: center; gap: 12px; padding: 12px 14px 16px; overflow: hidden; color: var(--text); transition: transform .08s ease; }
+.continue-row:hover { text-decoration: none; border-color: var(--accent); }
+.continue-row .continue-ico { font-size: 22px; }
+.continue-row .t { font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.continue-row .continue-bar { height: 4px; background: var(--surface-2); }
+.caught-up { text-align: center; padding: 6px 0 10px; }
+.caught-up-mark { width: 64px; height: 64px; margin: 0 auto 10px; border-radius: 50%; display: grid; place-items: center; font-size: 30px; font-weight: 700; background: var(--brand-gold); color: #2a1d00; animation: caught-pop .5s cubic-bezier(.2, 1.4, .4, 1); }
+@keyframes caught-pop { from { transform: scale(.4); opacity: 0; } }
+.caught-up-title { font-size: 22px; font-weight: 700; }
+.caught-up-sub { opacity: .85; }
+.home-choices { display: grid; gap: 10px; }
+.choice { display: flex; align-items: center; gap: 14px; padding: 14px 16px; color: var(--text); transition: transform .08s ease, border-color .12s ease; }
+.choice:hover { text-decoration: none; border-color: var(--accent); }
+.choice > span:last-child { display: flex; flex-direction: column; }
+.choice-ico { font-size: 24px; width: 44px; height: 44px; border-radius: 12px; display: grid; place-items: center; background: var(--accent-soft); flex: none; }
+.today-chips { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+.today-chip { padding: 5px 12px; border-radius: 99px; background: var(--surface-2); color: var(--muted); font-size: 13px; }
+.today-chip.lit { background: var(--hl); color: var(--hl-ink); font-weight: 600; }
+@media (max-width: 760px) {
+  /* Phone: the Continue button sits low, where the thumb already rests. */
+  .home { padding: 12px 12px 20px; }
+  .hero { flex: 1; justify-content: space-between; min-height: 46vh; }
+}

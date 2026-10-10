@@ -80,6 +80,7 @@ const DEFAULTS = {
   llm_key_claude: "", llm_key_gemini: "", llm_key_openai: "", llm_key_grok: "",
   google_email: "",
   signed_in: false,
+  haptics: true,
 };
 export const settings = { ...DEFAULTS };
 

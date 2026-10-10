@@ -1,7 +1,8 @@
 // Reader for imported web pages: the page's text with every word clickable, the same
 // definition popup as the player, and "Save to vocab". (No audio: a page has no recording.)
 
-import { api, esc, h, toast, showMenu, hideMenu, saveSettings, state } from "../app.js";
+import { api, esc, h, toast, showMenu, hideMenu, saveSettings, state, buzz } from "../app.js";
+import { saveProgress } from "../progress.js";
 import { sentenceBounds } from "../wordlookup.js";
 import { createWordBubble } from "../components/wordbubble.js";
 import { getDefinition } from "../define-service.js";
@@ -126,6 +127,7 @@ export async function render(view, { id, data }) {
   function defineAt(i, j = i) {
     const c = contextFor(i, j);
     target = { i, j, si: c.si, sj: c.sj, text: c.word };
+    buzz("tick");
     mark(i, j);
     bubble.show(wordEls[i], c.ctx);
   }
@@ -236,12 +238,23 @@ export async function render(view, { id, data }) {
   $("#font-down").onclick = () => changeFont(-2);
   $("#font-up").onclick = () => changeFont(2);
 
-  // Remember where you were reading.
+  // Remember where you were reading, and how far through the page you've got (for Home's
+  // "Continue" button: a page counts as unfinished until you've seen 70% of it).
   const posKey = `read:${id}`;
   try { tr.scrollTop = Number(localStorage.getItem(posKey)) || 0; } catch { /* storage unavailable */ }
+  const remember = () => {
+    const seen = tr.scrollHeight > 0 ? Math.min(1, (tr.scrollTop + tr.clientHeight) / tr.scrollHeight) : 1;
+    // A page short enough to fit on screen has been seen in full.
+    saveProgress({ id, kind: "page", title: ep.title, sub: host, image: "", frac: seen });
+  };
+  let scrollTimer = 0;
+  tr.addEventListener("scroll", () => { clearTimeout(scrollTimer); scrollTimer = setTimeout(remember, 400); }, { passive: true });
+  setTimeout(remember, 50); // (a timer, not an animation frame: those pause while the window is hidden)
 
   return () => {
     try { localStorage.setItem(posKey, String(Math.round(tr.scrollTop))); } catch { /* storage unavailable */ }
+    clearTimeout(scrollTimer);
+    remember();
     bubble.hide();
     window.removeEventListener("resize", onResize);
     document.removeEventListener("pointerdown", onOutside);

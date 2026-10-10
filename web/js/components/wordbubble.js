@@ -1,7 +1,7 @@
 // Definition bubble shown when a word is clicked/tapped. Platform-independent: the caller
 // supplies the definition fetcher and the audio/vocab actions.
 
-import { esc } from "../app.js";
+import { esc, buzz } from "../app.js";
 
 /**
  * @param {HTMLElement} host positioned (relative) container the bubble lives in
@@ -134,6 +134,9 @@ export function createWordBubble(host, actions) {
           await actions.onSave(def);
           saved = true;
           render(current.state, current.message);
+          buzz("success");
+          el.classList.add("just-saved");
+          setTimeout(() => el.classList.remove("just-saved"), 900);
         } catch {
           b.disabled = false;
         }

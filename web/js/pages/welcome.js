@@ -7,7 +7,7 @@ export async function render(view, { step }) {
   if (step === "welcome") {
     view.append(h(`<div class="welcome">
       <div class="hero"><img src="/icons/icon-256.png" alt=""><div>
-        <h1 style="margin:0">Welcome to Arabic Podcast Studio</h1>
+        <h1 style="margin:0">Welcome to Tamkeen</h1>
         <p class="muted" style="margin:0">Learn Arabic from real podcasts, with word-by-word transcripts.</p></div></div>
       <div class="ar-sample">أَهْلًا وَسَهْلًا</div>
       <div class="card stack">

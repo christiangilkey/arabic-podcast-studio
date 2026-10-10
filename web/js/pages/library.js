@@ -91,7 +91,7 @@ export async function render(view, { feedId, query }) {
     feeds = await api("/feeds");
     const list = $("#feed-list");
     list.innerHTML = "";
-    const all = h(`<a class="feed-item${feedId ? "" : " active"}" href="#/"><div class="ph all">🎧</div><div><div class="t">All episodes</div></div></a>`);
+    const all = h(`<a class="feed-item${feedId ? "" : " active"}" href="#/library"><div class="ph all">🎧</div><div><div class="t">All episodes</div></div></a>`);
     list.append(all);
     for (const f of feeds) {
       const img = f.url === PAGES_FEED ? `<div class="ph all">🌐</div>` : isLocalFeed(f.url) ? `<div class="ph all">🎬</div>` : f.image ? `<img src="${esc(f.image)}" alt="" loading="lazy" referrerpolicy="no-referrer">` : `<div class="ph"></div>`;
@@ -113,7 +113,7 @@ export async function render(view, { feedId, query }) {
       return;
     }
     const f = feeds.find((x) => x.id === feedId);
-    if (!f) { location.hash = "#/"; return; }
+    if (!f) { location.hash = "#/library"; return; }
     if (f.url === PAGES_FEED) {
       head.append(h(`<div class="lib-head"><div class="ph video-ph">🌐</div><div class="meta"><h1>${esc(f.title)}</h1>
         <div class="desc small">Web pages you imported. Open one to read it with every word clickable. Add more with
@@ -148,7 +148,7 @@ export async function render(view, { feedId, query }) {
     el.querySelector("#remove-feed").onclick = async () => {
       if (!confirm(`Remove “${f.title}”? Its transcripts and downloaded audio will be deleted. Saved vocab is kept.`)) return;
       await api(`/feeds/${feedId}`, { method: "DELETE" });
-      location.hash = "#/";
+      location.hash = "#/library";
     };
   }
 
@@ -164,7 +164,7 @@ export async function render(view, { feedId, query }) {
     for (const [key, label] of FILTERS) {
       const b = h(`<button type="button" class="${key === filter ? "active" : ""}">${label} <span class="n">${n(key)}</span></button>`);
       b.onclick = () => {
-        const base = feedId ? `#/feed/${feedId}` : "#/";
+        const base = feedId ? `#/feed/${feedId}` : "#/library";
         location.hash = key ? `${base}?status=${key}` : base;
       };
       tabs.append(b);
