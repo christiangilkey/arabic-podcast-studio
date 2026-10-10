@@ -556,3 +556,36 @@ begin
     end if;
   end loop;
 end $$;
+
+-- ---------------------------------------------------------------- online / offline
+-- Each running app says "I'm here" about once a minute; someone counts as online while their
+-- last sign of life is under about two and a half minutes old. Visible only to the person's
+-- friends and guild-mates.
+create table if not exists public.presence (
+  user_id    uuid primary key references public.profiles(id) on delete cascade,
+  last_seen  timestamptz not null default now()
+);
+alter table public.presence enable row level security;
+drop policy if exists "connected people see presence" on public.presence;
+create policy "connected people see presence" on public.presence
+  for select to authenticated using (user_id = auth.uid() or public.are_connected(auth.uid(), user_id));
+
+-- The server's clock stamps the time, so a device with a wrong clock can't appear online forever.
+create or replace function public.heartbeat(online boolean default true) returns void
+language sql security definer set search_path = public as $$
+  insert into public.presence (user_id, last_seen)
+  values (auth.uid(), case when online then now() else now() - interval '1 hour' end)
+  on conflict (user_id) do update set last_seen = excluded.last_seen;
+$$;
+revoke all on function public.heartbeat(boolean) from public, anon;
+grant execute on function public.heartbeat(boolean) to authenticated;
+
+-- Seconds since each of these people was last seen (null = never), by the server's clock.
+create or replace function public.seen_ago(people uuid[]) returns table (user_id uuid, seconds double precision)
+language sql stable security definer set search_path = public as $$
+  select p.user_id, extract(epoch from (now() - p.last_seen))
+  from public.presence p
+  where p.user_id = any(people) and (p.user_id = auth.uid() or public.are_connected(auth.uid(), p.user_id));
+$$;
+revoke all on function public.seen_ago(uuid[]) from public, anon;
+grant execute on function public.seen_ago(uuid[]) to authenticated;
